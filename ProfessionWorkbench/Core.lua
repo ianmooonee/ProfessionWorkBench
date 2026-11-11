@@ -5,7 +5,7 @@ local PW = {}
 ns.PW = PW
 _G.ProfessionWorkbench = PW -- handy for /dump while debugging
 
-PW.version = "0.5.0"
+PW.version = "0.6.0"
 
 local floor, max, format = math.floor, math.max, string.format
 
@@ -428,6 +428,10 @@ for _, e in ipairs({
     "BAG_UPDATE_DELAYED", "BANKFRAME_OPENED", "BANKFRAME_CLOSED",
     "PLAYERBANKSLOTS_CHANGED", "GET_ITEM_INFO_RECEIVED",
     "MERCHANT_SHOW", "MERCHANT_UPDATE",
+    "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED",
+    "AUCTION_HOUSE_THROTTLED_SYSTEM_READY",
+    "COMMODITY_SEARCH_RESULTS_UPDATED", "COMMODITY_SEARCH_RESULTS_ADDED",
+    "ITEM_SEARCH_RESULTS_UPDATED", "ITEM_SEARCH_RESULTS_ADDED",
 }) do
     pcall(events.RegisterEvent, events, e) -- tolerate events this client lacks
 end
@@ -529,6 +533,11 @@ end
 
 function PW:MERCHANT_UPDATE()
     self:ScanMerchant()
+end
+
+-- The auction house closed under a running scan: stop cleanly.
+function PW:AUCTION_HOUSE_CLOSED()
+    if self:IsScanning() then self:StopScan(false) end
 end
 
 function PW:PrintDisposition(itemID)
@@ -720,6 +729,23 @@ SlashCmdList.PROFWORKBENCH = function(msg)
             end
         end
 
+    elseif msg:match("^ahscan") then
+        self:StartScan()
+
+    elseif msg == "ahstop" then
+        if self:IsScanning() then self:StopScan(false) else Print("No scan is running.") end
+
+    elseif msg == "ahstatus" then
+        local done, total, failed = self:ScanProgress()
+        if not done then
+            Print("No scan is running.")
+        else
+            Print(format("Scanning: %d of %d items (%d skipped). /pwb ahstop to cancel.", done, total, failed or 0))
+        end
+
+    elseif msg == "ahitem" then
+        self:ScanHovered()
+
     elseif msg == "reset" then
         PW.db.point = nil
         PW.db.size = nil
@@ -767,6 +793,9 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         print("  /pwb price <itemID> <gold> - set an item's price by hand")
         print("  /pwb scanitem <gold> - record the hovered item's price by hand")
         print("  /pwb de [item] - compare vendor, auction and disenchant value")
+        print("  /pwb ahscan - at the auction house, price your reagents and products")
+        print("  /pwb ahstop - stop a running auction house scan")
+        print("  /pwb ahitem - price just the item you are hovering")
         print("  /pwb prices - list known prices")
         print("  /pwb queue [<count>] [<recipe>] - add to the craft queue")
         print("  /pwb list - shopping list for the queue")

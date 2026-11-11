@@ -4,7 +4,7 @@ A cleaner, flat dark replacement for the profession window in **World of Warcraf
 
 Open any profession as usual and Profession Workbench appears instead of the default window, with a searchable recipe list, skill-up colors at a glance, reagent counts that include your bank, and crafting cooldowns tracked across all your characters.
 
-> **Status:** early version (0.5.0), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
+> **Status:** early version (0.6.0), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
 
 ## Features
 
@@ -31,7 +31,8 @@ Open any profession as usual and Profession Workbench appears instead of the def
 **Cost and profit**
 - The details panel shows what one craft costs in reagents, what the result sells for after the 5% auction house cut, and the profit. Recipes missing a price say so rather than showing a fake number.
 - **Sort by profit** ranks the whole list by what one craft earns instead of grouping by category. Recipes with no price go last.
-- Prices come from merchant visits (vendor prices are learned whenever you open a merchant) and from `/pwb price` or `/pwb scanitem` for anything you want to record by hand. Auction house scanning is not in yet; until it is, hover a listing and use `/pwb scanitem`, or rely on the vendor prices.
+- **Scan prices** (top left of the window, or `/pwb ahscan`) prices every reagent and product of your known recipes, plus the disenchant materials, while the auction house is open. It paces itself to the auction house's 100 queries per minute, so a scan takes a couple of minutes; the button shows progress and stops it. `/pwb ahstop` also stops it, and `/pwb ahitem` prices just the item you are hovering.
+- Merchant visits fill in vendor prices automatically, and `/pwb price` or `/pwb scanitem` record anything you want by hand.
 - A manual price is never overwritten by learning, so it always wins.
 - Prices are saved per account, so the numbers work on any character and away from the auction house.
 
@@ -88,6 +89,10 @@ Open a profession the normal way (spellbook or action bar). The window is movabl
 | `/pwb queue [<count>] [<recipe>]` | Add to the craft queue; with no arguments it queues the selected recipe once |
 | `/pwb list` | Show the shopping list for the queue |
 | `/pwb de [item]` | Compare vendor, auction and disenchant value for an item (hover it, or give an item ID or name) |
+| `/pwb ahscan` | At the auction house, price your recipes' reagents and products |
+| `/pwb ahitem` | Price just the item you are hovering |
+| `/pwb ahstop` | Stop a running scan |
+| `/pwb ahstatus` | Show scan progress |
 | `/pwb queueclear` | Empty the craft queue |
 | `/pwb reset` | Move the window back to the center of the screen and restore its default size |
 | `/pwb debug` | Print client version and API info (useful for bug reports) |

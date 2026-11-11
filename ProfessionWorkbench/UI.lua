@@ -261,7 +261,7 @@ local function BuildToolbar(f)
     -- Search
     local search = CreateFrame("EditBox", nil, f, BT)
     search:SetPoint("TOPLEFT", PAD, -52)
-    search:SetSize(LIST_W - 92, 22)
+    search:SetSize(LIST_W - 92 - 58, 22)
     SetBD(search, C.panel)
     search:SetFontObject(ChatFontNormal)
     search:SetAutoFocus(false)
@@ -287,18 +287,18 @@ local function BuildToolbar(f)
     f.collapseAll = ca
 
     -- Sort by profit replaces the category grouping with one flat, ranked list.
-    local ps = FlatButton(f, "Sort by profit", 86, 22)
-    ps:SetPoint("LEFT", search, "RIGHT", 6, 0)
+    -- Always visible (it's the only way to turn the sort on); highlighted when on.
+    local ps = FlatButton(f, "Profit", 52, 22)
+    ps:SetPoint("LEFT", ca, "RIGHT", 6, 0)
     ps:SetScript("OnClick", function() PW:ToggleProfitSort() end)
     ps:SetScript("OnEnter", function(self)
         ShowTooltip(self, function(tt)
             tt:AddLine("Sort by profit")
-            tt:AddLine("Ranks every recipe by what one craft earns, using the prices you have. Recipes with no price go last.", 1, 1, 1, true)
+            tt:AddLine("Ranks every recipe by what one craft earns, using the prices you have. Recipes with no price go last. Click again to group by category.", 1, 1, 1, true)
             tt:AddLine("Set prices with /pwb price, or visit a merchant to learn vendor prices.", 0.7, 0.7, 0.7, true)
         end)
     end)
     ps:SetScript("OnLeave", GameTooltip_Hide)
-    ps:Hide()
     f.profitSort = ps
 
     -- Opens the craft queue / shopping list over the detail pane.
@@ -618,7 +618,7 @@ local function BuildDetail(f)
     create:SetPoint("LEFT", plus, "RIGHT", 12, 0)
     create:SetScript("OnClick", function()
         qty:ClearFocus()
-        if PW.selected then PW.API.Craft(PW.selected, tonumber(qty:GetText()) or 1) end
+        if PW.selected then PW.API.Craft(PW.selected, max(tonumber(qty:GetText()) or 1, 1)) end
     end)
 
     local createAll = FlatButton(c, "Create all", 90, 22)
@@ -635,7 +635,7 @@ local function BuildDetail(f)
         qty:ClearFocus()
         local r = PW.selected and PW.byIndex[PW.selected]
         if not r then return end
-        local n = tonumber(qty:GetText()) or 1
+        local n = max(tonumber(qty:GetText()) or 1, 1)
         PW:AddToQueue(r.index, n)
         if PW.frame and PW.frame.shopping and PW.frame.shopping:IsShown() then
             PW:RefreshQueue()
@@ -791,8 +791,20 @@ BuildShoppingList = function(f)
     sl.empty:SetWidth(400)
     sl.empty:SetText("The queue is empty. Select a recipe and click Queue to plan a batch.")
 
+    -- Rows are created up front; RefreshQueue shows as many as fit the panel's
+    -- current height and the mouse wheel scrolls through the rest.
+    sl.offset = 0
+    sl:EnableMouseWheel(true)
+    sl:SetScript("OnMouseWheel", function(self, delta)
+        self.offset = max((self.offset or 0) - delta * 3, 0)
+        PW:RefreshQueue()
+    end)
+    sl.more = Text(sl, "GameFontHighlightSmall", C.muted)
+    sl.more:SetPoint("BOTTOMRIGHT", -10, 6)
+    sl.more:SetJustifyH("RIGHT")
+
     sl.rows = {}
-    for i = 1, 24 do
+    for i = 1, 40 do
         local y = -54 - (i - 1) * 20
         local row = CreateFrame("Button", nil, sl)
         row:SetHeight(18)
@@ -874,8 +886,21 @@ function PW:RefreshQueue()
     end
 
     sl.empty:SetShown(#entries == 0)
+
+    -- How many 20px rows fit below the header (54px) with room for the
+    -- "more" line at the bottom.
+    local visible = min(#sl.rows, max(floor((sl:GetHeight() - 54 - 22) / 20), 1))
+    local maxOffset = max(#entries - visible, 0)
+    sl.offset = min(max(sl.offset or 0, 0), maxOffset)
+    if maxOffset > 0 then
+        sl.more:SetText(format("%d-%d of %d  (scroll for more)",
+            sl.offset + 1, min(sl.offset + visible, #entries), #entries))
+    else
+        sl.more:SetText("")
+    end
+
     for i, row in ipairs(sl.rows) do
-        local e = entries[i]
+        local e = (i <= visible) and entries[sl.offset + i] or nil
         row.entry = e
         row.recipeIndex = e and e.recipeIndex or nil
         if not e then
@@ -1011,7 +1036,7 @@ function PW:UpdateFilterWidgets()
     end
     f.haveMats.fill:SetShown(fl.haveMats)
     f.useBank.fill:SetShown(fl.useBank)
-    f.profitSort:SetShown(self.db.sortProfit or false)
+    f.profitSort.label:SetTextColor(unpack(self.db.sortProfit and C.accent or C.text))
 end
 
 local function Craftable(r)
@@ -1117,8 +1142,9 @@ function PW:RebuildList()
     end
     self.display = display
     self.frame.collapseAll.label:SetText(self:AnyExpanded() and "Collapse all" or "Expand all")
-    self.frame.collapseAll:SetShown(not byProfit)
-    self.frame.profitSort:SetShown(byProfit)
+    -- Collapsing means nothing in the flat profit list.
+    SetButtonEnabled(self.frame.collapseAll, not byProfit)
+    self:UpdateFilterWidgets()
     self:UpdateList()
 end
 

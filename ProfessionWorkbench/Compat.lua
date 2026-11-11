@@ -208,8 +208,9 @@ local function Schematic(id)
     if id == nil then return end
     local s = schemCache[id]
     if s == nil then
-        s = (T.GetRecipeSchematic and S("GetRecipeSchematic", id, false)) or false
-        schemCache[id] = s
+        s = T.GetRecipeSchematic and S("GetRecipeSchematic", id, false)
+        -- Only cache a real answer: nil can just mean "not loaded yet".
+        if s then schemCache[id] = s end
     end
     return s or nil
 end
@@ -228,7 +229,8 @@ local function SkillLines()
 end
 
 local function InAnySkillLine(id, lines)
-    if #lines == 0 then return true end
+    -- Without the check function, filtering would hide every recipe.
+    if #lines == 0 or type(T.IsRecipeInSkillLine) ~= "function" then return true end
     for _, line in ipairs(lines) do
         if S("IsRecipeInSkillLine", id, line) then return true end
     end
@@ -283,8 +285,8 @@ local function CategoryName(id)
     if not id then return end
     local c = catCache[id]
     if c == nil then
-        c = S("GetCategoryInfo", id) or false
-        catCache[id] = c
+        c = S("GetCategoryInfo", id)
+        if c then catCache[id] = c end -- nil may just mean "not loaded yet"
     end
     return c and c.name or nil
 end

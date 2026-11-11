@@ -2,7 +2,7 @@
 --
 -- Everything the addon knows about an item's value is easier to read where you
 -- are already looking, so the price block is added to every item tooltip that
--- has anything to say. Holding Alt adds the recipe detail on top.
+-- has anything to say, followed by which recipes use it and what makes it.
 
 local ADDON, ns = ...
 local PW = assert(ns.PW, "Profession WorkBench: Tooltip.lua must load after Core.lua")
@@ -61,15 +61,10 @@ function PW:AddPriceLines(tt, itemID)
         end
     end
 
-    if any then
-        -- Name the addon so the block is not mistaken for game text.
-        tt:AddLine(" ")
-        tt:AddLine("|cff5a9bffProfession Workbench|r", 1, 1, 1, true)
-    end
     return any
 end
 
--- The disenchant/craft detail shown when a modifier is held.
+-- Which recipes use the item, and which recipe makes it.
 function PW:AddDetailLines(tt, itemID)
     local any = false
     local craftable = self:RecipesUsing(itemID)
@@ -125,6 +120,9 @@ function PW:RecipesUsing(itemID)
         if pa ~= pb then return pa > pb end
         return a.name < b.name
     end)
+    -- Cached because this now runs on every item tooltip. Each scan (which
+    -- happens whenever a profession opens) clears the cache, so an answer
+    -- taken while the profession was closed doesn't outlive the next open.
     self.usesIndex[itemID] = list
     return list
 end
@@ -144,22 +142,37 @@ end
 
 local hooked = false
 
+local function Decorate(tt, itemID)
+    if not itemID then return end
+    -- Always show whatever is known: prices first, then the recipe detail.
+    local prices = PW:AddPriceLines(tt, itemID)
+    local detail = PW:AddDetailLines(tt, itemID)
+    if prices or detail then
+        -- Name the addon once, at the end, so the block isn't mistaken for game text.
+        tt:AddLine(" ")
+        tt:AddLine("|cff5a9bffProfession Workbench|r", 1, 1, 1, true)
+    end
+end
+
 function PW:InstallTooltipHook()
-    if hooked or not (TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and ITEM_TYPE) then
+    if hooked then return end
+    hooked = true
+
+    if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and ITEM_TYPE then
+        TooltipDataProcessor.AddTooltipPostCall(ITEM_TYPE, function(tt, data)
+            Decorate(tt, data and (data.id or (data.item and data.item.itemID)))
+        end)
         return
     end
-    hooked = true
-    TooltipDataProcessor.AddTooltipPostCall(ITEM_TYPE, function(tt, data)
-        local itemID = data and (data.id or (data.item and data.item.itemID))
-        if not itemID then return end
 
-        -- Always show whatever is known. Holding Alt adds the recipe detail.
-        local added = PW:AddPriceLines(tt, itemID)
-        if IsModifiedClick and IsModifiedClick("ALT") then
-            local more = PW:AddDetailLines(tt, itemID)
-            if more and not added then
-                tt:AddLine("|cff5a9bffProfession Workbench|r", 1, 1, 1, true)
-            end
+    -- Older tooltip system: hook each item tooltip directly.
+    local function OnSetItem(tt)
+        local _, link = tt:GetItem()
+        Decorate(tt, PW.ItemIDFromLink(link))
+    end
+    for _, tt in ipairs({ GameTooltip, ItemRefTooltip }) do
+        if tt and tt.HookScript and tt:HasScript("OnTooltipSetItem") then
+            tt:HookScript("OnTooltipSetItem", OnSetItem)
         end
-    end)
+    end
 end

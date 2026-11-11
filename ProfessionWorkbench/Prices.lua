@@ -55,9 +55,9 @@ function PW:SetPrice(itemID, unit, source, force)
         local oldRank, newRank = TRUST[old.source] or 0, TRUST[source] or 0
         -- A manual price is never overwritten by a scan or a vendor visit.
         if oldRank > newRank then return old end
-        -- Same source: keep the cheaper observation, which is what matters
-        -- when buying and is the safe reading when selling.
-        if oldRank == newRank and (old.unit or 0) <= unit then return old end
+        -- Same source: the newer observation wins, so prices can rise as well
+        -- as fall and the timestamp stays current. (Picking the cheapest
+        -- listing within one scan is the scanner's job, see Auction.lua.)
     end
     local entry = { unit = unit, source = source, at = time() }
     prices[itemID] = entry
@@ -208,11 +208,11 @@ end
 -- What the craft's output sells for on the AH, after the cut.
 -- Returns value, complete.
 function PW:OutputValue(index)
-    local itemID = PW.OutputItemID and PW.OutputItemID(index)
+    local itemID = self.API and self.API.OutputItemID and self.API.OutputItemID(index)
     if not itemID then return nil, false end
     local unit = self:UnitPrice(itemID)
     if not unit then return nil, false end
-    local made = PW.AmountMade and PW.AmountMade(index) or 1
+    local made = self:AmountMade(index)
     return floor(unit * made * (1 - PW.AH_CUT) + 0.5), true
 end
 

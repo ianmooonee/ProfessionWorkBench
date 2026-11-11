@@ -13,6 +13,11 @@
 -- query, pulls every page of results, and harvests the prices of every item it
 -- recognises along the way. That is a single query for the whole profession
 -- rather than hundreds, which is both faster and far gentler on the throttle.
+--
+-- Only one request is ever outstanding. Results that arrive while we aren't
+-- waiting (a second event for the same page, or the player's own search in
+-- Blizzard's window) are ignored, and a watchdog retries once and then gives up
+-- if the auction house never answers, so a scan can't hang.
 
 local ADDON, ns = ...
 local PW = assert(ns.PW, "Profession WorkBench: Auction.lua must load after Core.lua")
@@ -33,8 +38,12 @@ end
 local SORTS = { { sortOrder = (Enum and Enum.AuctionHouseSortOrder
     and Enum.AuctionHouseSortOrder.Price) or 0, reverseSort = false } }
 
--- Give up on a runaway listing after this many pages.
-local MAX_PAGES = 40
+-- Give up on a runaway listing after this many extra pages.
+local MAX_PAGES = 60
+-- Seconds to wait for an answer before retrying (once) and then giving up.
+local REQUEST_TIMEOUT = 15
+-- Pause between pages, to stay well inside the throttle.
+local PAGE_DELAY = 0.2
 
 ---------------------------------------------------------------------------
 -- What we want to price
@@ -62,7 +71,15 @@ end
 -- Scan state
 ---------------------------------------------------------------------------
 
--- scan = { wanted = { [itemID] = true }, seen = n, pages = n, priced = n }
+-- scan = {
+--   wanted = { [itemID] = true }, wantedCount = n,
+--   best = { [itemID] = cheapest unit price seen this scan },
+--   priced = n, seen = n,      -- items priced / browse rows looked at
+--   harvested = n,             -- rows of GetBrowseResults() already read
+--   pages = n,                 -- extra pages requested
+--   waiting = bool, token = n, -- one outstanding request + its watchdog
+--   search = "...", single = itemID,
+-- }
 local scan
 
 function PW:IsScanning() return scan ~= nil end
@@ -77,9 +94,21 @@ function PW:AuctionHouseOpen()
     return (AuctionHouseFrame and AuctionHouseFrame:IsShown()) and true or false
 end
 
+local function NewScan(wantedSet, wantedCount)
+    return {
+        wanted = wantedSet, wantedCount = wantedCount,
+        best = {}, priced = 0, seen = 0, harvested = 0, pages = 0,
+        waiting = false, token = 0, retried = false,
+    }
+end
+
 function PW:StartScan()
     if not usable then
         Notify("This client has no auction house browse API. Record prices with /pwb scanitem instead.")
+        return
+    end
+    if not self:AuctionHouseOpen() then
+        Notify("Open the auction house first, then scan.")
         return
     end
     if scan then
@@ -91,37 +120,99 @@ function PW:StartScan()
         Notify("Nothing to price: open a profession first so the addon knows your recipes.")
         return
     end
-    scan = { wanted = wantedSet, wantedCount = #wanted, seen = 0, pages = 0, priced = 0, found = {} }
+    scan = NewScan(wantedSet, #wanted)
     Notify(format("Scanning the auction house for %d items of interest.", #wanted))
+    self:UpdateAHButton()
     self:SendBrowse()
 end
 
-function PW:StopScan(finished)
+-- status: "done" (read everything), "capped" (hit MAX_PAGES), "error",
+-- or anything false-y for a cancel. Kept compatible with StopScan(false).
+function PW:StopScan(status)
     if not scan then return end
-    local priced, wanted, seen = scan.priced, scan.wantedCount, scan.seen
+    local s = scan
     scan = nil
-    if finished then
-        Notify(format("Scan finished: priced %d of the %d items you care about (looked at %d listings).", priced, wanted, seen))
+
+    if s.single then
+        local name = (C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(s.single)) or ("item " .. s.single)
+        if s.best[s.single] then
+            Notify(format("%s: lowest buyout %s each.", name, PW.Money(s.best[s.single])))
+        elseif status == "done" then
+            Notify(format("%s isn't listed on the auction house right now.", name))
+        elseif status then
+            Notify(format("Couldn't price %s.", name))
+        end
+    elseif status == "done" then
+        local missing = s.wantedCount - s.priced
+        Notify(format("Scan finished: priced %d of the %d items you care about (looked at %d listings).%s",
+            s.priced, s.wantedCount, s.seen,
+            missing > 0 and format(" %d aren't listed right now.", missing) or ""))
+    elseif status == "capped" then
+        Notify(format("Scan stopped after %d pages: priced %d of %d. The auction house was too big to read in one go.",
+            s.pages, s.priced, s.wantedCount))
+    elseif status == "error" then
+        Notify(format("Scan stopped: the auction house stopped answering. Priced %d of %d.", s.priced, s.wantedCount))
     else
-        Notify(format("Scan stopped: priced %d of %d so far.", priced, wanted))
+        Notify(format("Scan stopped: priced %d of %d so far.", s.priced, s.wantedCount))
     end
+
     self:UpdateAHButton()
     if self.frame and self.frame:IsShown() then self:Refresh() end
 end
 
--- One query for the whole house; pages arrive through the browse events.
+-- Mark a request as outstanding and start its watchdog.
+local function Arm()
+    scan.waiting = true
+    scan.token = scan.token + 1
+    local s, token = scan, scan.token
+    C_Timer.After(REQUEST_TIMEOUT, function()
+        if scan == s and s.waiting and s.token == token then
+            PW:OnRequestLost()
+        end
+    end)
+end
+
+-- One query for the whole house (or one item name); pages arrive through the
+-- browse events.
 function PW:SendBrowse()
     if not scan then return end
-    scan.pages = 0
+    scan.harvested = 0 -- a new query replaces the result list
+    Arm()
     local ok, err = pcall(AH.SendBrowseQuery, {
-        searchString = "",
+        searchString = scan.search or "",
         sorts = SORTS,
         filters = {},
         itemClassFilters = {},
     })
     if not ok then
         Notify("The auction house refused the query: " .. tostring(err))
-        self:StopScan(false)
+        self:StopScan("error")
+    end
+end
+
+function PW:RequestMore()
+    if not scan then return end
+    scan.pages = scan.pages + 1
+    Arm()
+    if not pcall(AH.RequestMoreBrowseResults) then
+        self:StopScan("done")
+    end
+end
+
+-- The request was dropped or never answered: retry once, then give up.
+function PW:OnRequestLost()
+    if not scan then return end
+    scan.waiting = false
+    if scan.retried then
+        self:StopScan("error")
+        return
+    end
+    scan.retried = true
+    if scan.pages == 0 and scan.harvested == 0 then
+        self:SendBrowse()
+    else
+        scan.pages = scan.pages - 1 -- the lost page doesn't count
+        self:RequestMore()
     end
 end
 
@@ -129,54 +220,62 @@ end
 -- Harvesting prices from browse results
 ---------------------------------------------------------------------------
 
--- Walk every browse result available and record the cheapest price per item.
--- Returns how many new items were priced.
+-- Read the rows that arrived since last time and record the cheapest price
+-- per wanted item. GetBrowseResults() returns the whole accumulated list, so
+-- only the new tail is read; each row is counted once.
 function PW:HarvestBrowse()
-    if not scan then return 0 end
+    if not scan then return end
     local results = AH.GetBrowseResults()
-    if type(results) ~= "table" then return 0 end
+    if type(results) ~= "table" then return end
+    if #results < scan.harvested then scan.harvested = 0 end -- list was replaced
 
-    local newPrices = 0
-    for _, r in ipairs(results) do
-        local key = r.itemKey
+    for i = scan.harvested + 1, #results do
+        local r = results[i]
+        local key = r and r.itemKey
         local itemID = key and (key.itemID or (key.GetItemID and key:GetItemID()))
         if itemID then
             scan.seen = scan.seen + 1
-            -- minPrice is the cheapest listing of that item, per unit already.
+            -- minPrice is the cheapest listing of that item key, per unit.
             local price = r.minPrice
             if price and price > 0 and scan.wanted[itemID] then
-                scan.found[itemID] = true
-                local before = PW:UnitPrice(itemID)
-                PW:SetPrice(itemID, floor(price + 0.5), "ah")
-                if PW:UnitPrice(itemID) ~= before then newPrices = newPrices + 1 end
+                price = floor(price + 0.5)
+                -- Several item keys can share an itemID; keep the cheapest.
+                if not scan.best[itemID] then
+                    scan.priced = scan.priced + 1
+                end
+                if not scan.best[itemID] or price < scan.best[itemID] then
+                    scan.best[itemID] = price
+                    PW:SetPrice(itemID, price, "ah")
+                end
             end
         end
     end
-    -- Count only what this scan actually saw, so the number matches the target.
-    scan.priced = 0
-    for _ in pairs(scan.found) do scan.priced = scan.priced + 1 end
-    if newPrices > 0 then self:UpdateAHButton() end
-    return newPrices
+    scan.harvested = #results
+    self:UpdateAHButton()
 end
 
 -- Results arrived: harvest, then ask for another page if there is more.
 function PW:OnBrowseResults()
-    if not scan then return end
+    -- Only act on an answer to our own request. This drops the second event
+    -- some clients send for the same page, and the player's own searches.
+    if not scan or not scan.waiting then return end
+    scan.waiting = false
+    scan.retried = false
     self:HarvestBrowse()
 
-    if AH.HasFullBrowseResults() then
-        self:StopScan(true)
+    local full = not AH.HasFullBrowseResults or AH.HasFullBrowseResults()
+    if full or scan.priced >= scan.wantedCount then
+        self:StopScan("done")
         return
     end
-    scan.pages = scan.pages + 1
-    if scan.pages > MAX_PAGES then
-        self:StopScan(true)
+    if scan.pages >= MAX_PAGES then
+        self:StopScan("capped")
         return
     end
-    local ok = pcall(AH.RequestMoreBrowseResults)
-    if not ok then
-        self:StopScan(true)
-    end
+    local s = scan
+    C_Timer.After(PAGE_DELAY, function()
+        if scan == s and not s.waiting then PW:RequestMore() end
+    end)
 end
 
 ---------------------------------------------------------------------------
@@ -184,13 +283,16 @@ end
 ---------------------------------------------------------------------------
 
 function PW:AUCTION_HOUSE_BROWSE_RESULTS_UPDATED()
-    -- Some clients fire this once per page batch and again with the additions,
-    -- so ignore it unless a scan is actually waiting on data.
-    if scan then self:OnBrowseResults() end
+    self:OnBrowseResults()
 end
 
 function PW:AUCTION_HOUSE_BROWSE_RESULTS_ADDED()
-    if scan then self:OnBrowseResults() end
+    self:OnBrowseResults()
+end
+
+-- The throttle discarded a queued request: don't wait for the watchdog.
+function PW:AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED()
+    if scan and scan.waiting then self:OnRequestLost() end
 end
 
 ---------------------------------------------------------------------------
@@ -273,17 +375,25 @@ function PW:ScanHovered()
         Notify("No auction house API here. Use /pwb scanitem <gold> instead.")
         return
     end
+    if not self:AuctionHouseOpen() then
+        Notify("Open the auction house first.")
+        return
+    end
     local itemID = self:HoveredItem()
     if not itemID then
         Notify("Hover an auction listing first.")
         return
     end
     if scan then Notify("A scan is already running; it will cover this item.") return end
-    if not (C_Item and C_Item.GetItemInfo and select(1, C_Item.GetItemInfo(itemID))) then
+    local name = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(itemID)
+    if not name then
         Notify("That item isn't cached yet; hover it again.")
         return
     end
-    -- A scan restricted to the one item.
-    scan = { wanted = { [itemID] = true }, wantedCount = 1, seen = 0, pages = 0, priced = 0, found = {} }
+    -- Search by name so this reads a handful of rows, not the whole house.
+    scan = NewScan({ [itemID] = true }, 1)
+    scan.single = itemID
+    scan.search = name
+    self:UpdateAHButton()
     self:SendBrowse()
 end

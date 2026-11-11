@@ -41,8 +41,10 @@ end
 -- change in recipe ordering. Returns the live recipe or nil.
 function PW:FindRecipeByName(name)
     if not name or not self.recipes then return end
+    -- Case-insensitive: the slash command lowercases what the player types.
+    local wanted = name:lower()
     for _, r in ipairs(self.recipes) do
-        if r.name == name then return r end
+        if r.name and r.name:lower() == wanted then return r end
     end
 end
 
@@ -91,25 +93,29 @@ end
 -- character (bags, and optionally the bank).
 ---------------------------------------------------------------------------
 
-local function AddNeed(totals, itemID, count, name)
-    if not itemID or count <= 0 then return end
-    local t = totals[itemID]
+-- `key` is the itemID, or "name:<reagent name>" for a reagent whose item isn't
+-- cached yet (so it still shows up instead of silently vanishing).
+local function AddNeed(totals, order, key, itemID, count, name)
+    if not key or count <= 0 then return end
+    local t = totals[key]
     if not t then
         t = { itemID = itemID, need = 0, name = name }
-        totals[itemID] = t
+        totals[key] = t
+        order[#order + 1] = key
     end
     t.need = t.need + count
     t.name = t.name or name
 end
 
 -- Walk the queue, expanding any reagent we can make ourselves.
--- Returns a list of { itemID, name, need, have, missing, craftableFrom } where
--- craftableFrom is the recipe name when the item can be crafted instead of
--- bought.
+-- Returns a list of { itemID, name, need, have, missing }.
 function PW:ShoppingList(queue, includeBank)
     queue = queue or self:Queue()
     local totals, order = {}, {}
     local depthGuard = 0
+    -- Stock already set aside for earlier reagents in this walk, so two
+    -- recipes that both need the same 4 bolts don't each count them as theirs.
+    local reserved = {}
 
     local function NeedRecipe(r, crafts, depth)
         if not r or crafts <= 0 then return end
@@ -118,25 +124,25 @@ function PW:ShoppingList(queue, includeBank)
         for _, rg in ipairs(reagents) do
             local itemID = rg.itemID or PW.ItemIDFromLink(rg.link)
             local want = (rg.need or 1) * crafts
-            if itemID then
-                -- Can we make this reagent ourselves?
-                local sub = self:FindRecipeByOutput(itemID)
-                local have = self:CountOf(itemID, includeBank)
-                if sub and depth < MAX_DEPTH and have < want then
-                    -- Craft the shortfall rather than buying it.
+            if not itemID then
+                local name = rg.name or "Unknown reagent"
+                AddNeed(totals, order, "name:" .. name, nil, want, name)
+            else
+                local have = max(self:CountOf(itemID, includeBank) - (reserved[itemID] or 0), 0)
+                local use = min(have, want)
+                reserved[itemID] = (reserved[itemID] or 0) + use
+                local short = want - use
+
+                -- Can we make the shortfall ourselves instead of buying it?
+                local sub = short > 0 and self:FindRecipeByOutput(itemID)
+                if sub and sub ~= r and depth < MAX_DEPTH and depthGuard < 200 then
+                    depthGuard = depthGuard + 1
                     local made = max(self:AmountMade(sub.index), 1)
-                    local craftable = min(floor(have / max(rg.need or 1, 1)), crafts)
-                    local shortCrafts = max(crafts - craftable, 0)
-                    if shortCrafts > 0 then
-                        local subCrafts = math.ceil((shortCrafts * (rg.need or 1)) / made)
-                        depthGuard = depthGuard + 1
-                        if depthGuard < 200 then
-                            NeedRecipe(sub, subCrafts, depth + 1)
-                        end
-                    end
+                    NeedRecipe(sub, math.ceil(short / made), depth + 1)
                 else
-                    if not totals[itemID] then order[#order + 1] = itemID end
-                    AddNeed(totals, itemID, want, rg.name)
+                    -- Buy it (or it's already in stock). Also the fallback when
+                    -- the recursion guard trips, so nothing is ever dropped.
+                    AddNeed(totals, order, itemID, itemID, want, rg.name)
                 end
             end
         end
@@ -148,11 +154,11 @@ function PW:ShoppingList(queue, includeBank)
     end
 
     local list = {}
-    for _, itemID in ipairs(order) do
-        local t = totals[itemID]
-        local have = self:CountOf(itemID, includeBank)
+    for _, key in ipairs(order) do
+        local t = totals[key]
+        local have = t.itemID and self:CountOf(t.itemID, includeBank) or 0
         list[#list + 1] = {
-            itemID = itemID,
+            itemID = t.itemID,
             name = t.name,
             need = t.need,
             have = have,
@@ -191,9 +197,10 @@ function PW:FindRecipeByOutput(itemID)
     return self.outputIndex[itemID]
 end
 
-function PW:BuildOutputIndex()
+-- `recipes` is the list just scanned; self.recipes may still be the old one.
+function PW:BuildOutputIndex(recipes)
     local index = {}
-    for _, r in ipairs(self.recipes or {}) do
+    for _, r in ipairs(recipes or self.recipes or {}) do
         local out = self.API.OutputItemID and self.API.OutputItemID(r.index)
         -- First recipe wins, which is the cheapest-to-reach one in practice.
         if out and not index[out] then index[out] = r end

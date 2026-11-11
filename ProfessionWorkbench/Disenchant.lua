@@ -137,8 +137,9 @@ function PW:DisenchantLoot(itemID)
             loot[#loot + 1] = { itemID = row.shard, count = odds.shard }
         end
     elseif q == QUALITY_RARE then
-        -- Always one shard of the row.
-        if row.shard then loot[#loot + 1] = { itemID = row.shard, count = 1 } end
+        -- Always one shard of the row; the lowest band (no shard for greens)
+        -- still gives a Small Glimmering Shard for blues.
+        loot[#loot + 1] = { itemID = row.shard or SHARD_GLIMMER_SMALL, count = 1 }
     else
         -- Epic: shards up to required level 50, a crystal above it. The guide
         -- gives no count, so this is a floor of one.

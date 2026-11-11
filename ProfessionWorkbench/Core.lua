@@ -168,7 +168,7 @@ function PW:Scan()
     end
     -- Rebuild the reagent -> recipe map so the queue can find intermediates,
     -- and drop the tooltip caches, which depend on recipes and profits.
-    self:BuildOutputIndex()
+    self:BuildOutputIndex(recipes)
     if self.InvalidateItemIndexes then self:InvalidateItemIndexes() end
     return recipes, byIndex
 end
@@ -432,6 +432,7 @@ for _, e in ipairs({
     "MERCHANT_SHOW", "MERCHANT_UPDATE",
     "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED",
     "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED", "AUCTION_HOUSE_BROWSE_RESULTS_ADDED",
+    "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED",
 }) do
     pcall(events.RegisterEvent, events, e) -- tolerate events this client lacks
 end
@@ -523,7 +524,9 @@ function PW:PLAYERBANKSLOTS_CHANGED()
     self:RequestRefresh()
 end
 
-function PW:GET_ITEM_INFO_RECEIVED()
+function PW:GET_ITEM_INFO_RECEIVED(_, success)
+    -- A failed lookup fires this on every query; refreshing on it would loop.
+    if success == false then return end
     self:RequestRefresh()
 end
 
@@ -590,7 +593,6 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         if not rest then
             Print("Usage: /pwb price <itemID> <gold>  - set a price by hand, e.g. /pwb price 2592 1.5")
             Print("       /pwb price clear <itemID>  - forget a manual price")
-            Print("       /pwb prices  - list what is known")
         elseif rest:match("^clear%s+%d+$") then
             local clearID = tonumber(rest:match("^clear%s+(%d+)$"))
             if PW:Prices()[clearID] then
@@ -622,10 +624,20 @@ SlashCmdList.PROFWORKBENCH = function(msg)
     elseif msg:match("^queue%f[%A]") or msg == "queue" then
         local arg = msg:match("^queue%s+(.+)$")
         local r = self.selected and self.byIndex[self.selected]
-        if arg then
+        if arg and arg:match("^%d+$") then
+            -- Just a number: queue the selected recipe that many times.
+            local count = max(tonumber(arg), 1)
+            if r then
+                PW:AddToQueue(r.index, count)
+                Print(format("Queued %dx %s.", count, r.name))
+                if PW.frame and PW.frame:IsShown() then PW:RefreshQueue() end
+            else
+                Print("Select a recipe first, or name one: /pwb queue <count> <recipe>")
+            end
+        elseif arg then
             local count, name = arg:match("^(%d+)%s+(.+)$")
             name = name or arg
-            count = tonumber(count) or 1
+            count = max(tonumber(count) or 1, 1)
             local found = PW:FindRecipeByName(name)
             if found then
                 PW:AddToQueue(found.index, count)
@@ -652,7 +664,7 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         local queue = PW:Queue()
         if #queue == 0 then
             Print("The craft queue is empty. Add something with /pwb queue.")
-        elseif not self.recipes then
+        elseif not self.tradeSkillOpen then
             -- The shopping list needs the profession open to resolve recipes.
             Print(format("The queue has %d crafts. Open the profession to see what is missing.", PW:QueueCount()))
             for _, q in ipairs(queue) do print(format("  %dx %s", q.count, q.name)) end
@@ -765,6 +777,6 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         print("  /pwb price <itemID> <gold> - set an item's price by hand")
         print("  /pwb debug - show client and API info")
         print(" ")
-        print("Prices also appear on item tooltips; hold Alt on one for the recipes that use it.")
+        print("Prices, and the recipes that use an item, also appear on item tooltips.")
     end
 end

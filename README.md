@@ -4,7 +4,7 @@ A cleaner, flat dark replacement for the profession window in **World of Warcraf
 
 Open any profession as usual and Profession Workbench appears instead of the default window, with a searchable recipe list, skill-up colors at a glance, reagent counts that include your bank, and crafting cooldowns tracked across all your characters.
 
-> **Status:** early version (0.3.0), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
+> **Status:** early version (0.4.0), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
 
 ## Features
 
@@ -31,9 +31,15 @@ Open any profession as usual and Profession Workbench appears instead of the def
 **Cost and profit**
 - The details panel shows what one craft costs in reagents, what the result sells for after the 5% auction house cut, and the profit. Recipes missing a price say so rather than showing a fake number.
 - **Sort by profit** ranks the whole list by what one craft earns instead of grouping by category. Recipes with no price go last.
-- Prices come from merchant visits (vendor prices are learned whenever you open a merchant) and from `/pwb price` for anything you want to fix by hand. Auction house scanning is not in yet; until it is, set prices by hand or rely on the vendor ones.
+- Prices come from merchant visits (vendor prices are learned whenever you open a merchant) and from `/pwb price` or `/pwb scanitem` for anything you want to record by hand. Auction house scanning is not in yet; until it is, hover a listing and use `/pwb scanitem`, or rely on the vendor prices.
 - A manual price is never overwritten by learning, so it always wins.
 - Prices are saved per account, so the numbers work on any character and away from the auction house.
+
+**Craft queue and shopping list**
+- Select a recipe, set the amount and click **Queue**, or use `/pwb queue <count> <recipe name>`. The queue is remembered per profession.
+- The **Queue** button in the toolbar opens the list: what is queued, and for each reagent how many you have and how many you still need to buy.
+- Intermediates are followed automatically. Queuing 10 Azure Silk Hoods with 47 Silk Cloth in your bags asks for the bolts too, and tells you that you are 33 Silk Cloth short rather than 33 bolts.
+- Missing reagents are listed first and marked in red, so the shopping list reads top-down.
 
 **Cooldowns**
 - Cooldown recipes (transmutes, Mooncloth and so on) are recorded whenever you open the profession, for every character.
@@ -73,6 +79,10 @@ Open a profession the normal way (spellbook or action bar). The window is movabl
 | `/pwb price <itemID> <gold>` | Set an item's price by hand, e.g. `/pwb price 2592 1.5` for Wool Cloth at 1g 50s |
 | `/pwb prices` | List every stored price with its source and age |
 | `/pwb price clear <itemID>` | Forget a manually set price |
+| `/pwb scanitem <gold>` | Record the price of the item you are hovering (an auction listing or a bag item), e.g. `/pwb scanitem 1.5` |
+| `/pwb queue [<count>] [<recipe>]` | Add to the craft queue; with no arguments it queues the selected recipe once |
+| `/pwb list` | Show the shopping list for the queue |
+| `/pwb queueclear` | Empty the craft queue |
 | `/pwb reset` | Move the window back to the center of the screen and restore its default size |
 | `/pwb debug` | Print client version and API info (useful for bug reports) |
 

@@ -301,6 +301,19 @@ local function BuildToolbar(f)
     ps:Hide()
     f.profitSort = ps
 
+    -- Opens the craft queue / shopping list over the detail pane.
+    local qb = FlatButton(f, "Queue", 60, 22)
+    qb:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD, -52)
+    qb:SetScript("OnClick", function() PW:ToggleShoppingList() end)
+    qb:SetScript("OnEnter", function(self)
+        ShowTooltip(self, function(tt)
+            tt:AddLine("Craft queue")
+            tt:AddLine("Plan a batch: select a recipe, set the amount and click Queue in the details pane. This shows what is still missing.", 1, 1, 1, true)
+        end)
+    end)
+    qb:SetScript("OnLeave", GameTooltip_Hide)
+    f.queueBtn = qb
+
     -- Difficulty chips
     f.chips = {}
     local x = PAD
@@ -457,6 +470,8 @@ local function BuildList(f)
     f.scroll = sb
 end
 
+local BuildShoppingList -- defined below, used by BuildDetail
+
 local function BuildDetail(f)
     local d = CreateFrame("Frame", nil, f, BT)
     d:SetPoint("TOPLEFT", f.list, "TOPRIGHT", PAD, 0)
@@ -612,8 +627,30 @@ local function BuildDetail(f)
         if r and r.numAvailable > 0 then PW.API.Craft(r.index, r.numAvailable) end
     end)
 
+    -- Queue the amount in the quantity box, so "queue 5x" needs no typing.
+    local queueBtn = FlatButton(c, "Queue", 60, 22)
+    queueBtn:SetPoint("LEFT", createAll, "RIGHT", 6, 0)
+    queueBtn:SetScript("OnClick", function()
+        qty:ClearFocus()
+        local r = PW.selected and PW.byIndex[PW.selected]
+        if not r then return end
+        local n = tonumber(qty:GetText()) or 1
+        PW:AddToQueue(r.index, n)
+        if PW.frame and PW.frame.shopping and PW.frame.shopping:IsShown() then
+            PW:RefreshQueue()
+        end
+        PW.Print(format("Queued %dx %s. %d crafts in the queue.", n, r.name, PW:QueueCount()))
+    end)
+    queueBtn:HookScript("OnEnter", function(self)
+        ShowTooltip(self, function(tt)
+            tt:SetText("Add to the craft queue")
+            tt:AddLine("Queues the amount in the box. Open the Shopping list to see what is missing.", 0.7, 0.7, 0.7, true)
+        end)
+    end)
+    queueBtn:HookScript("OnLeave", GameTooltip_Hide)
+
     c.qty, c.create, c.createAll = qty, create, createAll
-    c.craftControls = { minus, qty, plus, create, createAll }
+    c.craftControls = { minus, qty, plus, create, createAll, queueBtn }
 
     -- Enchant target: enchants that go on gear are applied straight to the
     -- item picked here (replaces the quantity / create controls).
@@ -710,6 +747,159 @@ local function BuildDetail(f)
     f.cdEmpty = Text(d, "GameFontHighlightSmall", C.muted)
     f.cdEmpty:SetPoint("BOTTOMLEFT", 10, 10 + (NUM_CD_LINES - 1) * 16)
     f.cdEmpty:SetText("None tracked yet. Opening a profession records its cooldowns.")
+
+    BuildShoppingList(f)
+end
+
+---------------------------------------------------------------------------
+-- Shopping list
+--
+-- An overlay on the detail pane, because the list needs the room the recipe
+-- details normally take and only matters while planning.
+---------------------------------------------------------------------------
+
+BuildShoppingList = function(f)
+    local sl = CreateFrame("Frame", nil, f, BT)
+    sl:SetPoint("TOPLEFT", f.list, "TOPRIGHT", PAD, 0)
+    sl:SetPoint("BOTTOMRIGHT", -PAD, FOOTER_H + PAD)
+    SetBD(sl, C.panel)
+    sl:Hide()
+    f.shopping = sl
+
+    sl.title = Text(sl, "GameFontNormal")
+    sl.title:SetPoint("TOPLEFT", 10, -8)
+    sl.title:SetText("Craft queue")
+
+    sl.summary = Text(sl, "GameFontHighlightSmall", C.muted)
+    sl.summary:SetPoint("TOPLEFT", 10, -28)
+
+    local close = FlatButton(sl, "Back", 56, 18)
+    close:SetPoint("TOPRIGHT", -8, -6)
+    close:SetScript("OnClick", function() PW:ShowShoppingList(false) end)
+
+    local clear = FlatButton(sl, "Clear", 56, 18)
+    clear:SetPoint("RIGHT", close, "LEFT", -6, 0)
+    clear:SetScript("OnClick", function()
+        PW:ClearQueue()
+        PW:RefreshQueue()
+        PW:UpdateDetail()
+    end)
+
+    sl.empty = Text(sl, "GameFontDisable", C.muted)
+    sl.empty:SetPoint("TOPLEFT", 10, -54)
+    sl.empty:SetWidth(400)
+    sl.empty:SetText("The queue is empty. Select a recipe and click Queue to plan a batch.")
+
+    sl.rows = {}
+    for i = 1, 24 do
+        local y = -54 - (i - 1) * 20
+        local row = CreateFrame("Button", nil, sl)
+        row:SetHeight(18)
+        row:SetPoint("TOPLEFT", 10, y)
+        row:SetPoint("TOPRIGHT", sl, "TOPRIGHT", -10, y)
+        row.bg = row:CreateTexture(nil, "BACKGROUND")
+        row.bg:SetAllPoints()
+        row.bg:SetTexture(WHITE)
+        row.bg:SetVertexColor(0, 0, 0, 0)
+        row.name = Text(row, "GameFontHighlightSmall")
+        row.name:SetPoint("LEFT")
+        row.name:SetPoint("RIGHT", row, "RIGHT", -150, 0)
+        row.name:SetWordWrap(false)
+        row.count = Text(row, "GameFontHighlightSmall", C.muted)
+        row.count:SetPoint("RIGHT", -60, 0)
+        row.count:SetJustifyH("RIGHT")
+        row.missing = Text(row, "GameFontHighlightSmall")
+        row.missing:SetPoint("RIGHT")
+        row.missing:SetJustifyH("RIGHT")
+        row:SetScript("OnEnter", function(self)
+            if self.entry then self.bg:SetVertexColor(unpack(C.hover)) end
+        end)
+        row:SetScript("OnLeave", function(self)
+            self.bg:SetVertexColor(0, 0, 0, 0)
+        end)
+        row:SetScript("OnClick", function(self)
+            -- Clicking a queued recipe selects it; clicking a shopping item does nothing.
+            if self.recipeIndex then PW:Select(self.recipeIndex, true) end
+        end)
+        sl.rows[i] = row
+    end
+    return sl
+end
+
+function PW:ShowShoppingList(show)
+    local f = self.frame
+    if not f or not f.shopping then return end
+    if show then
+        f.detail:Hide()
+        f.shopping:Show()
+        self:RefreshQueue()
+    else
+        f.shopping:Hide()
+        f.detail:Show()
+    end
+end
+
+function PW:ToggleShoppingList()
+    local f = self.frame
+    if not f or not f.shopping then return end
+    self:ShowShoppingList(not f.shopping:IsShown())
+end
+
+-- Fill the panel: the queued recipes first, then what is missing for them.
+function PW:RefreshQueue()
+    local f = self.frame
+    local sl = f and f.shopping
+    if not sl or not sl:IsShown() then return end
+
+    local queue = self:Queue()
+    local useBank = self.db.filters.useBank
+    local list = self:ShoppingList(queue, useBank)
+
+    local missingCount = 0
+    for _, e in ipairs(list) do
+        if e.missing > 0 then missingCount = missingCount + 1 end
+    end
+
+    sl.summary:SetText(format("%d crafts queued, %d %s missing",
+        self:QueueCount(), missingCount, missingCount == 1 and "reagent" or "reagents"))
+
+    local entries = {}
+    for _, q in ipairs(queue) do
+        local r = self:FindRecipeByName(q.name)
+        entries[#entries + 1] = { kind = "queue", name = q.name, count = q.count, recipeIndex = r and r.index }
+    end
+    for _, e in ipairs(list) do
+        entries[#entries + 1] = { kind = "item", name = e.name or ("item " .. e.itemID), entry = e }
+    end
+
+    sl.empty:SetShown(#entries == 0)
+    for i, row in ipairs(sl.rows) do
+        local e = entries[i]
+        row.entry = e
+        row.recipeIndex = e and e.recipeIndex or nil
+        if not e then
+            row:Hide()
+        else
+            row:Show()
+            row.name:SetText(e.name)
+            if e.kind == "queue" then
+                row.name:SetTextColor(unpack(C.header))
+                row.count:SetText(format("x%d", e.count))
+                row.count:SetTextColor(unpack(C.muted))
+                row.missing:SetText("")
+            else
+                local it = e.entry
+                row.name:SetTextColor(unpack(C.text))
+                row.count:SetText(format("have %d / %d", it.have, it.need))
+                row.count:SetTextColor(unpack(C.muted))
+                if it.missing > 0 then
+                    row.missing:SetText(format("|cffff5959buy %d|r", it.missing))
+                else
+                    row.missing:SetText("|cff66ff66ok|r")
+                end
+            end
+        end
+    end
 end
 
 local function BuildFooter(f)
@@ -1454,4 +1644,5 @@ function PW:Refresh()
 
     self:UpdateDetail()
     self:UpdateCooldownPanel()
+    if f.shopping and f.shopping:IsShown() then self:RefreshQueue() end
 end

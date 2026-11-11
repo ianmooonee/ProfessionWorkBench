@@ -81,6 +81,37 @@ function PW:PriceCount()
 end
 
 ---------------------------------------------------------------------------
+-- Reading a price off the item under the cursor
+--
+-- A full auction house scan needs a throttled query queue. Hovering a listing
+-- and recording it is a far smaller thing that works today, and it gives real
+-- market prices without touching the auction house API at all.
+---------------------------------------------------------------------------
+
+-- The item and money amount shown in whatever tooltip is up, if it is an item.
+function PW:HoveredItem()
+    if not (GameTooltip and TooltipUtil and TooltipUtil.GetDisplayedItem) then return end
+    local ok, item = pcall(TooltipUtil.GetDisplayedItem, GameTooltip)
+    if not ok or not item then return end
+    local itemID = item.itemID or (item.GetItemID and item:GetItemID())
+    if not itemID then return end
+    -- The tooltip's own text carries the price line; reading it is fragile, so
+    -- report the item and let the caller supply the amount.
+    return itemID, item
+end
+
+-- Record a price for the hovered item. `gold` is per unit.
+function PW:PriceHovered(gold)
+    local itemID = self:HoveredItem()
+    if not itemID then return false, "Hover an item first (an auction listing or a bag item)." end
+    if not gold or gold <= 0 then return false, "Give a price, e.g. /pwb scanitem 1.5" end
+    local copper = floor(gold * 10000 + 0.5)
+    self:SetPrice(itemID, copper, "manual", true)
+    local name = C_Item and C_Item.GetItemInfo and select(1, C_Item.GetItemInfo(itemID))
+    return true, format("Recorded %s at %s each.", name or ("item " .. itemID), PW.Money(copper))
+end
+
+---------------------------------------------------------------------------
 -- Vendor prices
 --
 -- There is no API for "what does a vendor charge for item X": merchants are

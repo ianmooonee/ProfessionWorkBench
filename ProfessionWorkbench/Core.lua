@@ -5,7 +5,7 @@ local PW = {}
 ns.PW = PW
 _G.ProfessionWorkbench = PW -- handy for /dump while debugging
 
-PW.version = "0.3.0"
+PW.version = "0.4.0"
 
 local floor, max, format = math.floor, math.max, string.format
 
@@ -43,6 +43,7 @@ local defaults = {
     collapsed = {}, -- [profession] = { [category] = true }
     chars = {},
     prices = {}, -- account-wide: [itemID] = { unit, source, at }
+    queues = {}, -- [profession] = { { name = recipeName, count = n }, ... }
 }
 
 local function CopyDefaults(src, dst)
@@ -165,6 +166,8 @@ function PW:Scan()
         r.numAvailable = n or 0
         r.profit = select(1, self:Profit(r.index))
     end
+    -- Rebuild the reagent -> recipe map so the queue can find intermediates.
+    self:BuildOutputIndex()
     return recipes, byIndex
 end
 
@@ -605,6 +608,63 @@ SlashCmdList.PROFWORKBENCH = function(msg)
             end
         end
 
+    elseif msg:match("^queue") then
+        local arg = msg:match("^queue%s+(.+)$")
+        local r = self.selected and self.byIndex[self.selected]
+        if arg then
+            local count, name = arg:match("^(%d+)%s+(.+)$")
+            name = name or arg
+            count = tonumber(count) or 1
+            local found = self:FindRecipeByName(name)
+            if found then
+                self:AddToQueue(found.index, count)
+                Print(format("Queued %dx %s.", count, found.name))
+                if PW.frame and PW.frame:IsShown() then PW:RefreshQueue() end
+            else
+                Print("No recipe called \"" .. name .. "\" here. Open the right profession first.")
+            end
+        elseif r then
+            self:AddToQueue(r.index, 1)
+            Print(format("Queued 1x %s. Type /pwb queue <count> <recipe> to add more.", r.name))
+            if PW.frame and PW.frame:IsShown() then PW:RefreshQueue() end
+        else
+            Print("Usage: /pwb queue [<count>] [<recipe name>]")
+            Print("       With no arguments, queues the selected recipe once.")
+        end
+
+    elseif msg == "queueclear" then
+        self:ClearQueue()
+        Print("Craft queue cleared.")
+        if PW.frame and PW.frame:IsShown() then PW:RefreshQueue() end
+
+    elseif msg == "list" or msg == "shopping" then
+        local queue = self:Queue()
+        if #queue == 0 then
+            Print("The craft queue is empty. Add something with /pwb queue.")
+        elseif not self.recipes then
+            -- The shopping list needs the profession open to resolve recipes.
+            Print(format("The queue has %d crafts. Open the profession to see what is missing.", self:QueueCount()))
+            for _, q in ipairs(queue) do print(format("  %dx %s", q.count, q.name)) end
+        else
+            Print(format("Shopping list for %d queued crafts:", self:QueueCount()))
+            local list = self:ShoppingList(queue, self.db.filters.useBank)
+            if #list == 0 then
+                print("  Everything needed is already in your bags.")
+            end
+            for _, entry in ipairs(list) do
+                local col = entry.missing > 0 and "|cffff5959" or "|cff66ff66"
+                print(format("  %s x%d|r  (have %d, need %d)%s",
+                    col, entry.missing, entry.have, entry.need, entry.name and ("  " .. entry.name) or ""))
+            end
+        end
+
+    elseif msg:match("^scanitem") then
+        local amount = msg:match("^scanitem%s+(%S+)$")
+        local gold = amount and tonumber(amount:match("^([%d%.]+)"))
+        local ok, text = self:PriceHovered(gold)
+        Print(text)
+        if ok and PW.frame and PW.frame:IsShown() then PW:Refresh() end
+
     elseif msg == "reset" then
         PW.db.point = nil
         PW.db.size = nil
@@ -650,7 +710,11 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         print("  /pwb cd - list tracked cooldowns for all characters")
         print("  /pwb scale <0.6-2> - change the window size, e.g. /pwb scale 1.3")
         print("  /pwb price <itemID> <gold> - set an item's price by hand")
+        print("  /pwb scanitem <gold> - record the hovered item's price by hand")
         print("  /pwb prices - list known prices")
+        print("  /pwb queue [<count>] [<recipe>] - add to the craft queue")
+        print("  /pwb list - shopping list for the queue")
+        print("  /pwb queueclear - empty the craft queue")
         print("  /pwb reset - reset the window position and size")
         print("  /pwb debug - show client and API info")
     end

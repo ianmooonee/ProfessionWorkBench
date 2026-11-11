@@ -139,6 +139,12 @@ function Classic.Close()
     Try(CloseTradeSkill)
 end
 
+-- The classic API has no way to aim an enchant at an item from an addon.
+function Classic.SupportsEnchantTarget() return false end
+function Classic.IsValidEnchantTarget() return false end
+function Classic.EnchantTargets() return {} end
+function Classic.CraftEnchant() end
+
 ---------------------------------------------------------------------------
 -- C_TradeSkillUI backend
 ---------------------------------------------------------------------------
@@ -281,6 +287,7 @@ function Modern.Scan()
                 icon = info.icon,
                 categoryID = info.categoryID,
                 header = CategoryName(info.categoryID),
+                isEnchant = info.isEnchantingRecipe,
             }
             local cd, _, charges, maxCharges = S("GetRecipeCooldown", id)
             local hasCharge = maxCharges and maxCharges > 0 and charges and charges > 0
@@ -410,6 +417,88 @@ end
 
 function Modern.Close()
     S("CloseTradeSkill")
+end
+
+---------------------------------------------------------------------------
+-- Enchanting gear directly (C_TradeSkillUI.CraftEnchant + an ItemLocation)
+---------------------------------------------------------------------------
+
+local ENCHANT_TYPE = Enum and Enum.TradeskillRecipeType and Enum.TradeskillRecipeType.Enchant
+
+local canTarget = T and type(T.CraftEnchant) == "function"
+    and ItemLocation and ItemLocation.CreateFromEquipmentSlot
+    and C_Item and C_Item.DoesItemExist and C_Item.GetItemLink
+
+-- Recipe is an enchant that goes on an item (not one that makes an item).
+function Modern.SupportsEnchantTarget(r)
+    if not canTarget or not r then return false end
+    if r.isEnchant == nil then
+        local s = ENCHANT_TYPE and S("GetRecipeSchematic", r.index, false)
+        r.isEnchant = (s and s.recipeType == ENCHANT_TYPE) or false
+    end
+    return r.isEnchant and true or false
+end
+
+-- Valid targets as item GUIDs, or nil if the client can't tell us.
+local function EnchantGUIDs(id)
+    if not T.GetEnchantItems then return end
+    local guids = S("GetEnchantItems", id)
+    return type(guids) == "table" and guids or nil
+end
+
+local function GUIDOf(loc)
+    return C_Item.GetItemGUID and C_Item.DoesItemExist(loc) and C_Item.GetItemGUID(loc)
+end
+
+function Modern.IsValidEnchantTarget(id, loc)
+    if not (loc and C_Item.DoesItemExist(loc)) then return false end
+    local guids = EnchantGUIDs(id)
+    if not guids then return true end -- let the server decide
+    local guid = GUIDOf(loc)
+    for _, g in ipairs(guids) do
+        if g == guid then return true end
+    end
+    return false
+end
+
+local function TargetEntry(loc)
+    if not (loc and C_Item.DoesItemExist(loc)) then return end
+    return {
+        location = loc,
+        link = C_Item.GetItemLink(loc),
+        icon = C_Item.GetItemIcon and C_Item.GetItemIcon(loc),
+        equipped = loc.IsEquipmentSlot and loc:IsEquipmentSlot() or false,
+    }
+end
+
+-- Items that can receive the enchant: equipped gear first, then bags.
+function Modern.EnchantTargets(id)
+    local list = {}
+    local guids = EnchantGUIDs(id)
+    if guids and C_Item.GetItemLocation then
+        for _, guid in ipairs(guids) do
+            local ok, loc = pcall(C_Item.GetItemLocation, guid)
+            local e = ok and TargetEntry(loc)
+            if e then list[#list + 1] = e end
+        end
+        table.sort(list, function(a, b)
+            if a.equipped ~= b.equipped then return a.equipped end
+            return (a.link or "") < (b.link or "")
+        end)
+    else
+        -- No list from the client: offer equipped gear (not shirt/tabard).
+        for slot = 1, 18 do
+            if slot ~= 4 then
+                local e = TargetEntry(ItemLocation:CreateFromEquipmentSlot(slot))
+                if e then list[#list + 1] = e end
+            end
+        end
+    end
+    return list
+end
+
+function Modern.CraftEnchant(id, loc)
+    T.CraftEnchant(id, 1, {}, loc)
 end
 
 ---------------------------------------------------------------------------

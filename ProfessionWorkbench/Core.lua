@@ -30,6 +30,7 @@ PW.API = API
 
 local defaults = {
     useBlizzard = false,
+    scale = 1,
     filters = {
         optimal = true,
         medium = true,
@@ -208,23 +209,88 @@ function PW.SuppressBlizzard()
     end
 end
 
+-- "Use Workbench" button shown on top of Blizzard's profession window.
+local function AddSwitchButton(f, name)
+    local b = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    b:SetSize(130, 22)
+    b:SetText("Use Workbench")
+    if name == "TradeSkillFrame" then
+        -- The classic frame's art is inset from its edges.
+        b:SetPoint("BOTTOMRIGHT", f, "TOPRIGHT", -34, -10)
+    else
+        b:SetPoint("BOTTOMRIGHT", f, "TOPRIGHT", -4, 2)
+    end
+    b:SetScript("OnClick", function() PW:SetUseBlizzard(false) end)
+    b:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Switch to the Profession Workbench window")
+        GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", GameTooltip_Hide)
+    f.pwbSwitch = b
+end
+
 function PW:HookBlizzard()
     self.hooked = self.hooked or {}
     for name in pairs(ns.BLIZZARD_FRAMES) do
         local f = _G[name]
         if f and not self.hooked[name] then
             self.hooked[name] = true
-            f:HookScript("OnShow", function()
+            AddSwitchButton(f, name)
+            f:HookScript("OnShow", function(frame)
+                frame.pwbSwitch:SetShown(API ~= nil and API.CanReplace())
                 if PW:ShouldReplace() then C_Timer.After(0, PW.SuppressBlizzard) end
             end)
         end
     end
 end
 
+local LoadAddOnF = (C_AddOns and C_AddOns.LoadAddOn) or LoadAddOn
+
+local function BlizzardShown()
+    for name in pairs(ns.BLIZZARD_FRAMES) do
+        local f = _G[name]
+        if f and f:IsShown() then return true end
+    end
+    return false
+end
+
+local function ShowBlizzard()
+    for name, addon in pairs(ns.BLIZZARD_FRAMES) do
+        if not _G[name] and LoadAddOnF then pcall(LoadAddOnF, addon) end
+    end
+    PW:HookBlizzard()
+    for name in pairs(ns.BLIZZARD_FRAMES) do
+        local f = _G[name]
+        if f then
+            ShowUIPanel(f)
+            if f:IsShown() then return true end
+        end
+    end
+    return false
+end
+
+-- Switch between our window and Blizzard's, keeping the profession open.
+function PW:SetUseBlizzard(on)
+    self.db.useBlizzard = on and true or false
+    if on then
+        if self.frame and self.frame:IsShown() then
+            self.switching = true
+            self.frame:Hide()
+            self.switching = false
+            if not ShowBlizzard() then
+                Print("Couldn't open the default window. Close and reopen the profession.")
+            end
+        end
+    elseif API and BlizzardShown() then
+        self:OpenWindow()
+    end
+end
+
 -- Called from the UI when our window is hidden (close button, Esc, ...).
 function PW:OnWindowHidden()
     GameTooltip:Hide()
-    if not self.closingFromGame and API then
+    if not self.closingFromGame and not self.switching and API then
         API.Close()
     end
 end
@@ -294,7 +360,10 @@ function PW:TRADE_SKILL_SHOW()
         return
     end
     if not self:ShouldReplace() then return end
+    self:OpenWindow()
+end
 
+function PW:OpenWindow()
     self:HookBlizzard()
     self.SuppressBlizzard()
     C_Timer.After(0, PW.SuppressBlizzard)
@@ -354,11 +423,20 @@ SlashCmdList.PROFWORKBENCH = function(msg)
     msg = (msg or ""):lower():match("^%s*(.-)%s*$")
 
     if msg == "blizz" or msg == "blizzard" then
-        PW.db.useBlizzard = not PW.db.useBlizzard
+        PW:SetUseBlizzard(not PW.db.useBlizzard)
         Print(PW.db.useBlizzard
-            and "Using the default Blizzard window. Type /pwb blizz again to switch back."
+            and "Using the default Blizzard window. Click \"Use Workbench\" on it, or type /pwb blizz, to switch back."
             or "Using the Profession Workbench window.")
-        if PW.frame and PW.frame:IsShown() then PW.frame:Hide() end
+
+    elseif msg:match("^scale") then
+        local arg = msg:match("^scale%s+(%S+)")
+        if not arg then
+            Print(format("Window scale is %.2f. Use /pwb scale <0.6-2>, e.g. /pwb scale 1.3", PW.db.scale or 1))
+        elseif not tonumber(arg) then
+            Print("Usage: /pwb scale <0.6-2>, e.g. /pwb scale 1.3")
+        else
+            Print(format("Window scale set to %.2f.", PW:SetScale(arg)))
+        end
 
     elseif msg == "reset" then
         PW.db.point = nil
@@ -401,6 +479,7 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         Print("commands:")
         print("  /pwb blizz - switch between this window and the default one")
         print("  /pwb cd - list tracked cooldowns for all characters")
+        print("  /pwb scale <0.6-2> - change the window size, e.g. /pwb scale 1.3")
         print("  /pwb reset - reset the window position")
         print("  /pwb debug - show client and API info")
     end

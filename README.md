@@ -26,6 +26,7 @@ Open any profession as usual and Profession Workbench appears instead of the def
 
 **Crafting**
 - Quantity box with `-` / `+`, **Create** and **Create all** buttons.
+- Enchants that go on gear get an item slot instead: click it to pick an item from your equipped gear or bags (or drag an item onto it), then click **Enchant**. Right-click the slot to clear it. Needs a client with `C_TradeSkillUI.CraftEnchant`.
 
 **Cooldowns**
 - Cooldown recipes (transmutes, Mooncloth and so on) are recorded whenever you open the profession, for every character.
@@ -54,13 +55,14 @@ Replace the `ProfessionWorkbench` folder with the new one and `/reload`. Your se
 
 ## Usage
 
-Open a profession the normal way (spellbook or action bar). The window is movable by dragging and closes with **Esc** or the **X** button.
+Open a profession the normal way (spellbook or action bar). The window is movable by dragging and closes with **Esc** or the **X** button. Use the `-` / `+` buttons next to **X** to make it bigger or smaller. **Default UI** switches to the default Blizzard window; click **Use Workbench** on top of that window to come back. Your choice is remembered.
 
 | Command | What it does |
 | --- | --- |
 | `/pwb` | Show the command list |
-| `/pwb blizz` | Switch between Profession Workbench and the default Blizzard window |
+| `/pwb blizz` | Switch between Profession Workbench and the default Blizzard window (same as the **Default UI** / **Use Workbench** buttons) |
 | `/pwb cd` | List tracked cooldowns for all characters |
+| `/pwb scale <0.6-2>` | Change the window size (e.g. `/pwb scale 1.3`); the `-` / `+` buttons in the title bar do the same |
 | `/pwb reset` | Move the window back to the center of the screen |
 | `/pwb debug` | Print client version and API info (useful for bug reports) |
 

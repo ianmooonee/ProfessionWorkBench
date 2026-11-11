@@ -131,6 +131,10 @@ local function InsertLink(link)
     if link and ChatEdit_InsertLink then ChatEdit_InsertLink(link) end
 end
 
+local function TargetExists(loc)
+    return loc and C_Item and C_Item.DoesItemExist and C_Item.DoesItemExist(loc)
+end
+
 ---------------------------------------------------------------------------
 -- Build
 ---------------------------------------------------------------------------
@@ -145,6 +149,31 @@ function PW:RestorePosition()
     else
         f:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
     end
+end
+
+local SCALE_MIN, SCALE_MAX, SCALE_STEP = 0.6, 2.0, 0.1
+
+-- Scale the window, keeping its center on the same spot of the screen.
+function PW:SetScale(scale)
+    scale = tonumber(scale) or 1
+    scale = floor(scale * 20 + 0.5) / 20 -- round to 0.05
+    scale = min(max(scale, SCALE_MIN), SCALE_MAX)
+    self.db.scale = scale
+
+    local f = self.frame
+    if not f then return scale end
+    local cx, cy = f:GetCenter()
+    local oldEff = f:GetEffectiveScale()
+    f:SetScale(scale)
+    if cx and f:GetNumPoints() > 0 then
+        local ratio = oldEff / f:GetEffectiveScale()
+        f:ClearAllPoints()
+        f:SetPoint("CENTER", UIParent, "BOTTOMLEFT", cx * ratio, cy * ratio)
+        local p, _, rp, x, y = f:GetPoint()
+        self.db.point = { p, rp, x, y }
+    end
+    if f.scaleText then f.scaleText:SetText(format("%d%%", scale * 100 + 0.5)) end
+    return scale
 end
 
 local function BuildTitle(f)
@@ -163,6 +192,40 @@ local function BuildTitle(f)
     close:SetScript("OnEnter", function(self) self.label:SetTextColor(1, 0.4, 0.4) end)
     close:SetScript("OnLeave", function(self) self.label:SetTextColor(unpack(C.muted)) end)
     close:SetScript("OnClick", function() f:Hide() end)
+
+    -- Scale controls: [-] 100% [+]
+    local function ScaleButton(label, delta, tip)
+        local b = FlatButton(f, label, 20, 18)
+        b:SetScript("OnClick", function() PW:SetScale((PW.db.scale or 1) + delta) end)
+        b:HookScript("OnEnter", function(self)
+            ShowTooltip(self, function(tt)
+                tt:SetText(tip)
+                tt:AddLine("Or type /pwb scale <number>, e.g. /pwb scale 1.3", 0.7, 0.7, 0.7)
+            end)
+        end)
+        b:HookScript("OnLeave", GameTooltip_Hide)
+        return b
+    end
+    local plus = ScaleButton("+", SCALE_STEP, "Larger window")
+    plus:SetPoint("RIGHT", close, "LEFT", -8, 0)
+    f.scaleText = Text(f, "GameFontHighlightSmall", C.muted)
+    f.scaleText:SetPoint("RIGHT", plus, "LEFT", -4, 0)
+    f.scaleText:SetWidth(36)
+    f.scaleText:SetJustifyH("CENTER")
+    local minus = ScaleButton("-", -SCALE_STEP, "Smaller window")
+    minus:SetPoint("RIGHT", f.scaleText, "LEFT", -4, 0)
+
+    -- Switch to Blizzard's window (it gets a "Use Workbench" button to come back).
+    local blizz = FlatButton(f, "Default UI", 76, 18)
+    blizz:SetPoint("RIGHT", minus, "LEFT", -12, 0)
+    blizz:SetScript("OnClick", function() PW:SetUseBlizzard(true) end)
+    blizz:HookScript("OnEnter", function(self)
+        ShowTooltip(self, function(tt)
+            tt:SetText("Switch to the default window")
+            tt:AddLine("Click \"Use Workbench\" on it to come back.", 0.7, 0.7, 0.7)
+        end)
+    end)
+    blizz:HookScript("OnLeave", GameTooltip_Hide)
 
     local bar = CreateFrame("StatusBar", nil, f, BT)
     bar:SetPoint("TOPLEFT", 12, -34)
@@ -322,9 +385,6 @@ local function BuildList(f)
             local item = self.item
             if not item then return end
             if not self.isSelected then self.bg:SetVertexColor(unpack(C.hover)) end
-            if item.kind == "recipe" then
-                ShowTooltip(self, function(tt) PW.API.SetResultTooltip(tt, item.r.index) end)
-            end
         end)
         row:SetScript("OnLeave", function(self)
             if not self.isSelected then self.bg:SetVertexColor(0, 0, 0, 0) end
@@ -504,6 +564,67 @@ local function BuildDetail(f)
     end)
 
     c.qty, c.create, c.createAll = qty, create, createAll
+    c.craftControls = { minus, qty, plus, create, createAll }
+
+    -- Enchant target: enchants that go on gear are applied straight to the
+    -- item picked here (replaces the quantity / create controls).
+    local er = CreateFrame("Frame", nil, c)
+    er:SetPoint("TOPLEFT", 10, y - 18)
+    er:SetPoint("RIGHT", c, "RIGHT", -10, 0)
+    er:SetHeight(22)
+    er:Hide()
+
+    local enchant = FlatButton(er, "Enchant", 90, 22)
+    enchant:SetPoint("RIGHT")
+    enchant:SetScript("OnClick", function() PW:DoEnchant() end)
+    er.button = enchant
+
+    local slot = CreateFrame("Button", nil, er, BT)
+    slot:SetPoint("TOPLEFT")
+    slot:SetPoint("BOTTOMRIGHT", enchant, "BOTTOMLEFT", -8, 0)
+    SetBD(slot, C.bg)
+    slot:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    slot.icon = slot:CreateTexture(nil, "ARTWORK")
+    slot.icon:SetSize(20, 20)
+    slot.icon:SetPoint("LEFT", 1, 0)
+    slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    slot.plus = Text(slot, "GameFontHighlight", C.muted)
+    slot.plus:SetPoint("CENTER", slot.icon, "CENTER")
+    slot.plus:SetText("+")
+    slot.text = Text(slot, "GameFontHighlightSmall")
+    slot.text:SetPoint("LEFT", slot.icon, "RIGHT", 6, 0)
+    slot.text:SetPoint("RIGHT", -6, 0)
+    slot.text:SetWordWrap(false)
+    slot:SetScript("OnClick", function(self, button)
+        if button == "RightButton" then
+            PW:SetEnchantTarget(nil)
+        elseif CursorHasItem and CursorHasItem() then
+            PW:DropEnchantTarget()
+        else
+            PW:ToggleEnchantMenu(self)
+        end
+    end)
+    slot:SetScript("OnReceiveDrag", function() PW:DropEnchantTarget() end)
+    slot:SetScript("OnEnter", function(self)
+        self:SetBackdropColor(unpack(C.hover))
+        ShowTooltip(self, function(tt)
+            local link = PW:EnchantTargetLink()
+            if link then
+                tt:SetHyperlink(link)
+                tt:AddLine("Right-click to clear", 0.7, 0.7, 0.7)
+            else
+                tt:SetText("Item to enchant")
+                tt:AddLine("Click to pick from your gear and bags,", 0.7, 0.7, 0.7)
+                tt:AddLine("or drag an item here.", 0.7, 0.7, 0.7)
+            end
+        end)
+    end)
+    slot:SetScript("OnLeave", function(self)
+        self:SetBackdropColor(unpack(C.bg))
+        GameTooltip:Hide()
+    end)
+    er.slot = slot
+    c.enchantRow = er
 
     -- Cooldowns (all characters) - always visible at the bottom of the pane
     local cdLine = d:CreateTexture(nil, "ARTWORK")
@@ -588,6 +709,7 @@ function PW:BuildUI()
     end)
 
     self.frame = f
+    f:SetScale(self.db.scale or 1)
     self:RestorePosition()
 
     BuildTitle(f)
@@ -595,6 +717,7 @@ function PW:BuildUI()
     BuildList(f)
     BuildDetail(f)
     BuildFooter(f)
+    f.scaleText:SetText(format("%d%%", (self.db.scale or 1) * 100 + 0.5))
     self:UpdateFilterWidgets()
     return f
 end
@@ -780,6 +903,14 @@ function PW:OnRowClick(row)
 end
 
 function PW:Select(index, scrollTo)
+    if index ~= self.selected then
+        if self.enchantMenu then self.enchantMenu:Hide() end
+        -- Keep the picked item only if it can take the new enchant too.
+        if self.enchantTarget and not (TargetExists(self.enchantTarget)
+            and self.API.IsValidEnchantTarget(index, self.enchantTarget)) then
+            self.enchantTarget = nil
+        end
+    end
     self.selected = index
     PW.API.Select(index)
     if scrollTo then
@@ -877,6 +1008,165 @@ function PW:UpdateDetail()
     local can = r.numAvailable > 0 and not onCooldown
     SetButtonEnabled(c.create, can)
     SetButtonEnabled(c.createAll, can and r.numAvailable > 1)
+
+    -- Enchants that go on gear get the item slot instead of quantity controls.
+    local enchantMode = self.API.SupportsEnchantTarget(r)
+    for _, w in ipairs(c.craftControls) do w:SetShown(not enchantMode) end
+    c.enchantRow:SetShown(enchantMode)
+    if not enchantMode and self.enchantMenu then self.enchantMenu:Hide() end
+    self:UpdateEnchantRow()
+end
+
+---------------------------------------------------------------------------
+-- Enchant target
+---------------------------------------------------------------------------
+
+local MENU_ROWS = 12
+local MENU_ROW_H = 20
+
+function PW:EnchantTargetLink()
+    local loc = self.enchantTarget
+    if TargetExists(loc) then return C_Item.GetItemLink(loc) end
+end
+
+function PW:SetEnchantTarget(loc)
+    self.enchantTarget = loc
+    if self.enchantMenu then self.enchantMenu:Hide() end
+    self:UpdateEnchantRow()
+end
+
+-- An item dropped on the slot (or clicked onto it from the cursor).
+function PW:DropEnchantTarget()
+    local loc = C_Cursor and C_Cursor.GetCursorItem and C_Cursor.GetCursorItem()
+    ClearCursor()
+    if not loc or not self.selected then return end
+    if self.API.IsValidEnchantTarget(self.selected, loc) then
+        self:SetEnchantTarget(loc)
+    else
+        PW.Print("That item can't receive this enchant.")
+    end
+end
+
+function PW:DoEnchant()
+    local r = self.selected and self.byIndex[self.selected]
+    if r and TargetExists(self.enchantTarget) then
+        self.API.CraftEnchant(r.index, self.enchantTarget)
+    end
+end
+
+function PW:UpdateEnchantRow()
+    local f = self.frame
+    if not f then return end
+    local er = f.detail.content.enchantRow
+    if not er:IsShown() then return end
+    local r = self.selected and self.byIndex[self.selected]
+    if not TargetExists(self.enchantTarget) then self.enchantTarget = nil end
+
+    local slot = er.slot
+    local link = self:EnchantTargetLink()
+    if link then
+        slot.icon:SetTexture(C_Item.GetItemIcon(self.enchantTarget))
+        slot.icon:Show()
+        slot.plus:Hide()
+        slot.text:SetText(link)
+    else
+        slot.icon:Hide()
+        slot.plus:Show()
+        slot.text:SetText("|cff9a9aa0Choose an item to enchant|r")
+    end
+
+    local onCooldown = r and r.cooldownEnds and r.cooldownEnds > GetTime()
+    SetButtonEnabled(er.button, link ~= nil and r ~= nil and r.numAvailable > 0 and not onCooldown)
+end
+
+local function BuildEnchantMenu(f)
+    local m = CreateFrame("Frame", nil, f, BT)
+    m:SetFrameStrata("DIALOG")
+    m:SetWidth(280)
+    m:SetClampedToScreen(true)
+    m:EnableMouse(true)
+    m:EnableMouseWheel(true)
+    SetBD(m, C.panel)
+    m:Hide()
+    m.offset = 0
+    m:SetScript("OnMouseWheel", function(self, delta)
+        self.offset = self.offset - delta
+        PW:UpdateEnchantMenu()
+    end)
+
+    m.empty = Text(m, "GameFontHighlightSmall", C.muted)
+    m.empty:SetPoint("LEFT", 8, 0)
+    m.empty:SetText("Nothing in your gear or bags can take this enchant.")
+
+    m.rows = {}
+    for i = 1, MENU_ROWS do
+        local b = CreateFrame("Button", nil, m)
+        b:SetHeight(MENU_ROW_H)
+        b:SetPoint("TOPLEFT", 4, -4 - (i - 1) * MENU_ROW_H)
+        b:SetPoint("RIGHT", m, "RIGHT", -4, 0)
+        b.bg = b:CreateTexture(nil, "BACKGROUND")
+        b.bg:SetAllPoints()
+        b.bg:SetTexture(WHITE)
+        b.bg:SetVertexColor(0, 0, 0, 0)
+        b.icon = b:CreateTexture(nil, "ARTWORK")
+        b.icon:SetSize(16, 16)
+        b.icon:SetPoint("LEFT", 4, 0)
+        b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        b.text = Text(b, "GameFontHighlightSmall")
+        b.text:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
+        b.text:SetPoint("RIGHT", -4, 0)
+        b.text:SetWordWrap(false)
+        b:SetScript("OnEnter", function(self)
+            self.bg:SetVertexColor(unpack(C.hover))
+            if self.entry and self.entry.link then
+                ShowTooltip(self, function(tt) tt:SetHyperlink(self.entry.link) end)
+            end
+        end)
+        b:SetScript("OnLeave", function(self)
+            self.bg:SetVertexColor(0, 0, 0, 0)
+            GameTooltip:Hide()
+        end)
+        b:SetScript("OnClick", function(self)
+            if self.entry then PW:SetEnchantTarget(self.entry.location) end
+        end)
+        m.rows[i] = b
+    end
+    return m
+end
+
+function PW:UpdateEnchantMenu()
+    local m = self.enchantMenu
+    local items = self.enchantItems or {}
+    local maxOffset = max(0, #items - MENU_ROWS)
+    m.offset = min(max(m.offset, 0), maxOffset)
+    for i, b in ipairs(m.rows) do
+        local e = items[m.offset + i]
+        b.entry = e
+        if e then
+            b.icon:SetTexture(e.icon)
+            b.text:SetText((e.equipped and "" or "|cff9a9aa0(bag)|r ") .. (e.link or "?"))
+            b:Show()
+        else
+            b:Hide()
+        end
+    end
+    m.empty:SetShown(#items == 0)
+    m:SetHeight(max(1, min(#items, MENU_ROWS)) * MENU_ROW_H + 8)
+end
+
+function PW:ToggleEnchantMenu(anchor)
+    local m = self.enchantMenu
+    if m and m:IsVisible() then m:Hide() return end
+    if not m then
+        m = BuildEnchantMenu(self.frame)
+        self.enchantMenu = m
+    end
+    self.enchantItems = self.API.EnchantTargets(self.selected)
+    m.offset = 0
+    m:ClearAllPoints()
+    m:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -2)
+    self:UpdateEnchantMenu()
+    m:Show()
 end
 
 function PW:UpdateSummary()

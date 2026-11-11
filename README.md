@@ -21,7 +21,7 @@ Open any profession as usual and Profession Workbench appears instead of the def
 
 **Reagents**
 - Shows `bags / needed` for each reagent: green when your bags have enough, yellow when you'd need items from the bank, red when you're short.
-- Bank contents are remembered from your last bank visit, so counts work anywhere.
+- Bank contents are remembered from your last bank visit, so counts work anywhere. Your character's own bank tabs are counted; the account-wide bank is not.
 - **Have materials** filter shows only what you can craft now; **Count bank** includes bank items in counts and in that filter.
 
 **Crafting**
@@ -30,7 +30,7 @@ Open any profession as usual and Profession Workbench appears instead of the def
 
 **Cooldowns**
 - Cooldown recipes (transmutes, Mooncloth and so on) are recorded whenever you open the profession, for every character.
-- The bottom of the window lists them with time left or **Ready**, and you get a chat reminder at login when any are ready.
+- The bottom of the window lists them with time left or **Ready**, and you get a chat reminder at login the first time each one becomes ready. Entries are cleared a day after they finish, so the reminder doesn't repeat.
 
 ## Installation
 

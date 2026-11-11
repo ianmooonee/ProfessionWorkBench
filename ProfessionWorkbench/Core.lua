@@ -62,6 +62,9 @@ function PW:InitDB()
     local key = (UnitName("player") or "Unknown") .. "-" .. (GetRealmName() or "")
     self.db.chars[key] = self.db.chars[key] or {}
     self.charDB = self.db.chars[key]
+    self.charName = UnitName("player")
+    -- Kept so a name containing "-" isn't mangled when listing other characters.
+    self.charDB.name = self.charName
     self.charDB.cooldowns = self.charDB.cooldowns or {}
     self.charDB.bank = self.charDB.bank or {}
 end
@@ -101,15 +104,32 @@ local function SlotInfo(bag, slot)
     end
 end
 
+-- The character's bank bags. Modern clients name them in Enum.BagIndex; the
+-- classic globals (BANK_CONTAINER, NUM_BAG_SLOTS, NUM_BANKBAGSLOTS) are gone
+-- from newer ones, so fall back to them only when the enum is missing.
+local function BankBags()
+    local bags = {}
+    local e = Enum and Enum.BagIndex
+    if e then
+        for name, id in pairs(e) do
+            -- Character tabs only: the account bank is a separate storage.
+            if name:find("CharacterBankTab") then bags[#bags + 1] = id end
+        end
+    end
+    if #bags == 0 then
+        bags[1] = BANK_CONTAINER or -1
+        local first = (NUM_BAG_SLOTS or 4) + 1
+        for b = first, first + (NUM_BANKBAGSLOTS or 6) - 1 do
+            bags[#bags + 1] = b
+        end
+    end
+    return bags
+end
+
 function PW:ScanBank()
     if not self.charDB or not NumSlots then return end
     local counts = {}
-    local bags = { BANK_CONTAINER or -1 }
-    local first = (NUM_BAG_SLOTS or 4) + 1
-    for b = first, first + (NUM_BANKBAGSLOTS or 6) - 1 do
-        bags[#bags + 1] = b
-    end
-    for _, bag in ipairs(bags) do
+    for _, bag in ipairs(BankBags()) do
         for slot = 1, (NumSlots(bag) or 0) do
             local id, count = SlotInfo(bag, slot)
             if id then counts[id] = (counts[id] or 0) + (count or 1) end
@@ -134,11 +154,13 @@ function PW:Scan()
     local byIndex = {}
     for _, r in ipairs(recipes) do
         byIndex[r.index] = r
-        -- C_TradeSkillUI's numAvailable can be 0 even with every reagent in
-        -- the bags, so double-check it against the reagent counts.
-        if API.kind ~= "classic" then
-            r.numAvailable = max(r.numAvailable or 0, self:CraftableFromBags(r.index))
-        end
+        -- Prefer the client's own craftable count, then whatever the scan
+        -- reported, then the reagent arithmetic. Working it out from reagents
+        -- costs several calls per recipe, so it stays the last resort.
+        local n = API.CraftableCount(r.index)
+        if n == nil then n = r.numAvailable end
+        if n == nil then n = self:CraftableFromBags(r.index) end
+        r.numAvailable = n or 0
     end
     return recipes, byIndex
 end
@@ -176,28 +198,64 @@ function PW:RecordCooldowns(profession, recipes)
     local now = time()
     for _, r in ipairs(recipes) do
         if r.cooldown then
-            store[r.name] = { expires = now + r.cooldown, profession = profession }
-        elseif store[r.name] then
-            -- Known cooldown recipe that is off cooldown now.
-            store[r.name].expires = 0
+            local cd = store[r.name]
+            -- Only restart the timer when the recipe is on cooldown now, so a
+            -- refresh while a craft is running doesn't push the expiry back.
+            if not cd or (cd.expires or 0) <= now then
+                store[r.name] = {
+                    expires = now + r.cooldown,
+                    profession = profession,
+                    char = self.charName,
+                }
+            end
         end
+        -- A recipe that is off cooldown needs no change: the entry keeps its
+        -- past expiry, which shows as Ready and is pruned in ReadyCooldowns.
     end
 end
 
--- Every tracked cooldown for every character, soonest first.
+-- Cooldowns that have finished and not been announced yet, soonest first.
+-- Entries are dropped a day after they expire so the saved table can't grow.
+function PW:ReadyCooldowns()
+    local store, ready = self.charDB and self.charDB.cooldowns, {}
+    if not store then return ready end
+    local now = time()
+    for name, cd in pairs(store) do
+        local expires = cd.expires or 0
+        if expires > 0 and expires <= now then
+            if not cd.reported then
+                cd.reported = true
+                ready[#ready + 1] = { recipe = name }
+            elseif expires < now - 86400 then
+                store[name] = nil -- announced a day ago, nothing left to keep
+            end
+        end
+    end
+    table.sort(ready, function(a, b) return a.recipe < b.recipe end)
+    return ready
+end
+
+-- Tracked cooldowns for every character, earliest expiry first.
 function PW:AllCooldowns()
     local entries, now = {}, time()
-    for charKey, data in pairs(self.db.chars) do
+    for key, data in pairs(self.db.chars or {}) do
+        -- Saved before hyphenated names were split, so prefer the stored name.
+        local char = data.name or key
         for recipe, cd in pairs(data.cooldowns or {}) do
             entries[#entries + 1] = {
-                char = charKey:match("^([^-]+)") or charKey,
+                char = char,
                 recipe = recipe,
-                left = (cd.expires or 0) - now,
+                profession = cd.profession,
+                left = math.max((cd.expires or 0) - now, 0),
+                ready = (cd.expires or 0) <= now,
             }
         end
     end
     table.sort(entries, function(a, b)
-        if a.left == b.left then return a.recipe < b.recipe end
+        if a.left == b.left then
+            if a.char == b.char then return a.recipe < b.recipe end
+            return a.char < b.char
+        end
         return a.left < b.left
     end)
     return entries
@@ -215,6 +273,9 @@ end
 -- (its OnHide handler would close the trade skill).
 function PW.SuppressBlizzard()
     if not PW:ShouldReplace() then return end
+    -- Only while our window replaces it: Blizzard's window can also be opened
+    -- without a profession (e.g. the K key), and must then stay open.
+    if not (PW.frame and PW.frame:IsShown()) then return end
     for name in pairs(ns.BLIZZARD_FRAMES) do
         local f = _G[name]
         if f and f:IsShown() then
@@ -255,11 +316,24 @@ function PW:HookBlizzard()
         if f and not self.hooked[name] then
             self.hooked[name] = true
             AddSwitchButton(f, name)
-            f:HookScript("OnShow", function(frame)
-                frame.pwbSwitch:SetShown(API ~= nil and API.CanReplace())
-                if PW:ShouldReplace() then C_Timer.After(0, PW.SuppressBlizzard) end
+            f:HookScript("OnShow", function()
+                -- Next frame: TRADE_SKILL_SHOW may not have been handled yet.
+                C_Timer.After(0, function()
+                    PW:UpdateSwitchButtons()
+                    PW.SuppressBlizzard()
+                end)
             end)
         end
+    end
+    self:UpdateSwitchButtons()
+end
+
+-- "Use Workbench" only makes sense while a profession is actually open.
+function PW:UpdateSwitchButtons()
+    local show = self.tradeSkillOpen and API ~= nil and API.CanReplace()
+    for name in pairs(ns.BLIZZARD_FRAMES) do
+        local f = _G[name]
+        if f and f.pwbSwitch then f.pwbSwitch:SetShown(show and true or false) end
     end
 end
 
@@ -358,18 +432,18 @@ end
 
 function PW:PLAYER_LOGIN()
     C_Timer.After(5, function()
-        local ready = {}
-        for recipe, cd in pairs(PW.charDB.cooldowns) do
-            if (cd.expires or 0) <= time() then ready[#ready + 1] = recipe end
-        end
+        local ready = PW:ReadyCooldowns()
         if #ready > 0 then
-            table.sort(ready)
-            Print("Cooldowns ready: |cffffffff" .. table.concat(ready, ", ") .. "|r")
+            local names = {}
+            for i, e in ipairs(ready) do names[i] = e.recipe end
+            Print("Cooldowns ready: |cffffffff" .. table.concat(names, ", ") .. "|r")
         end
     end)
 end
 
 function PW:TRADE_SKILL_SHOW()
+    self.tradeSkillOpen = true
+    self:UpdateSwitchButtons()
     if not API then
         if not self.warnedAPI then
             self.warnedAPI = true
@@ -383,14 +457,14 @@ end
 
 function PW:OpenWindow()
     self:HookBlizzard()
-    self.SuppressBlizzard()
-    C_Timer.After(0, PW.SuppressBlizzard)
-
     API.Prepare()
 
     self:BuildUI()
     self.frame:Show()
     self:Refresh()
+
+    self.SuppressBlizzard()
+    C_Timer.After(0, PW.SuppressBlizzard)
 end
 
 function PW:TRADE_SKILL_UPDATE()
@@ -401,6 +475,8 @@ PW.TRADE_SKILL_DATA_SOURCE_CHANGED = PW.TRADE_SKILL_UPDATE
 PW.NEW_RECIPE_LEARNED = PW.TRADE_SKILL_UPDATE
 
 function PW:TRADE_SKILL_CLOSE()
+    self.tradeSkillOpen = false
+    self:UpdateSwitchButtons()
     if self.frame and self.frame:IsShown() then
         self.closingFromGame = true
         self.frame:Hide()

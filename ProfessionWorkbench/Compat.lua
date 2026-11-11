@@ -107,6 +107,10 @@ function Classic.GetReagents(index)
     return list
 end
 
+-- GetTradeSkillInfo already reports the craftable count on this backend, so
+-- there is nothing extra to ask for.
+function Classic.CraftableCount() return nil end
+
 function Classic.NumMade(index)
     return GetTradeSkillNumMade(index)
 end
@@ -192,6 +196,40 @@ end
 
 local BASIC_REAGENT = (Enum and Enum.CraftingReagentType and Enum.CraftingReagentType.Basic) or 1
 
+-- A recipe's schematic is static, and the reagent list, the amount made and the
+-- recipe type all need it, so fetch each one once instead of three times.
+local schemCache = {}
+local function Schematic(id)
+    if id == nil then return end
+    local s = schemCache[id]
+    if s == nil then
+        s = (T.GetRecipeSchematic and S("GetRecipeSchematic", id, false)) or false
+        schemCache[id] = s
+    end
+    return s or nil
+end
+
+-- The open profession's skill line, used to scope GetAllRecipeIDs. Recipes of
+-- an expansion's tier are checked against that tier's line as well.
+local function SkillLines()
+    local lines = {}
+    local base = S("GetBaseProfessionInfo")
+    if base and base.professionID then lines[#lines + 1] = base.professionID end
+    local child = S("GetChildProfessionInfo")
+    if child and (child.maxSkillLevel or 0) > 0 and child.professionID then
+        lines[#lines + 1] = child.professionID
+    end
+    return lines
+end
+
+local function InAnySkillLine(id, lines)
+    if #lines == 0 then return true end
+    for _, line in ipairs(lines) do
+        if S("IsRecipeInSkillLine", id, line) then return true end
+    end
+    return false
+end
+
 local function Difficulty(info)
     if type(info.difficulty) == "string" then return info.difficulty end
     if type(info.relativeDifficulty) == "number" then
@@ -212,19 +250,20 @@ end
 
 function Modern.GetLine()
     local name, rank, maxRank
-    if T.GetBaseProfessionInfo then
-        local base = S("GetBaseProfessionInfo")
-        if base then
-            name, rank, maxRank = base.professionName, base.skillLevel, base.maxSkillLevel
-        end
-        local child = S("GetChildProfessionInfo")
-        if child and (child.maxSkillLevel or 0) > 0 then
-            rank, maxRank = child.skillLevel, child.maxSkillLevel
-            name = name or child.parentProfessionName or child.professionName
-        end
+    local base = S("GetBaseProfessionInfo")
+    if base then
+        name, rank, maxRank = base.professionName, base.skillLevel, base.maxSkillLevel
     end
-    if (not name or name == "") and T.GetTradeSkillLine then
-        local _, n, r, m = S("GetTradeSkillLine")
+    -- A child profession (an expansion's skill line) is only worth using when
+    -- it really reports both a name and a skill, which this client doesn't
+    -- always do.
+    local child = S("GetChildProfessionInfo")
+    if child and (child.maxSkillLevel or 0) > 0 and (child.skillLevel or 0) > 0
+        and child.professionName and child.professionName ~= "" then
+        name, rank, maxRank = child.professionName, child.skillLevel, child.maxSkillLevel
+    end
+    if (not name or name == "") and type(T.GetTradeSkillLine) == "function" then
+        local n, r, m = S("GetTradeSkillLine")
         name, rank, maxRank = n, r, m
     end
     if name == "" then name = nil end
@@ -268,11 +307,17 @@ function Modern.Scan()
 
     local now = GetTime()
     local order = CategoryOrder()
+    local lines = SkillLines()
 
     for _, id in ipairs(List(S("GetAllRecipeIDs"))) do
         local info = S("GetRecipeInfo", id)
         local keep = info and info.name and info.learned ~= false
             and not info.isDummyRecipe and not info.isRecraft and not info.isGatheringRecipe
+        -- GetAllRecipeIDs is undocumented, so keep only the open profession's
+        -- recipes, the way Blizzard's own recipe list does.
+        if keep then
+            keep = InAnySkillLine(id, lines)
+        end
         -- Ranked recipes: only show the highest rank learned.
         if keep and info.nextRecipeID then
             local nextInfo = S("GetRecipeInfo", info.nextRecipeID)
@@ -283,11 +328,9 @@ function Modern.Scan()
                 index = id,
                 name = info.name,
                 difficulty = Difficulty(info),
-                numAvailable = info.numAvailable or 0,
                 icon = info.icon,
                 categoryID = info.categoryID,
                 header = CategoryName(info.categoryID),
-                isEnchant = info.isEnchantingRecipe,
             }
             local cd, _, charges, maxCharges = S("GetRecipeCooldown", id)
             local hasCharge = maxCharges and maxCharges > 0 and charges and charges > 0
@@ -327,9 +370,9 @@ end
 
 function Modern.GetReagents(id)
     local list = {}
-    if T.GetRecipeSchematic then
-        local s = S("GetRecipeSchematic", id, false)
-        for _, slot in ipairs(s and s.reagentSlotSchematics or {}) do
+    local s = Schematic(id)
+    if s then
+        for _, slot in ipairs(s.reagentSlotSchematics or {}) do
             local basic
             if slot.reagentType ~= nil then
                 basic = slot.reagentType == BASIC_REAGENT
@@ -341,9 +384,19 @@ function Modern.GetReagents(id)
                 -- Reagents with several qualities: count all of them.
                 local bags = 0
                 for _, rg in ipairs(slot.reagents) do
-                    if rg.itemID then bags = bags + (GetItemCountF(rg.itemID) or 0) end
+                    if rg.itemID and GetItemCountF then
+                        bags = bags + (GetItemCountF(rg.itemID) or 0)
+                    end
                 end
-                list[#list + 1] = ItemReagent(first.itemID, slot.quantityRequired, bags)
+                -- Variable-quantity slots change what one craft needs.
+                local need = slot.quantityRequired
+                for _, vq in ipairs(slot.variableQuantities or {}) do
+                    if vq.reagent and vq.reagent.itemID == first.itemID then
+                        need = vq.quantity
+                        break
+                    end
+                end
+                list[#list + 1] = ItemReagent(first.itemID, need, bags)
             end
         end
     elseif T.GetRecipeNumReagents then
@@ -363,11 +416,13 @@ function Modern.GetReagents(id)
     return list
 end
 
+function Modern.CraftableCount(id)
+    return S("GetCraftableCount", id)
+end
+
 function Modern.NumMade(id)
-    if T.GetRecipeSchematic then
-        local s = S("GetRecipeSchematic", id, false)
-        if s then return s.quantityMin, s.quantityMax end
-    end
+    local s = Schematic(id)
+    if s then return s.quantityMin, s.quantityMax end
     return S("GetRecipeNumItemsProduced", id)
 end
 
@@ -433,8 +488,11 @@ local canTarget = T and type(T.CraftEnchant) == "function"
 function Modern.SupportsEnchantTarget(r)
     if not canTarget or not r then return false end
     if r.isEnchant == nil then
-        local s = ENCHANT_TYPE and S("GetRecipeSchematic", r.index, false)
-        r.isEnchant = (s and s.recipeType == ENCHANT_TYPE) or false
+        -- isEnchantingRecipe marks every recipe of the Enchanting profession,
+        -- runed rods and oils included. Only an Enchant-type schematic is
+        -- applied to an item, so that is the test.
+        local s = Schematic(r.index)
+        r.isEnchant = (s and ENCHANT_TYPE and s.recipeType == ENCHANT_TYPE) or false
     end
     return r.isEnchant and true or false
 end
@@ -447,7 +505,8 @@ local function EnchantGUIDs(id)
 end
 
 local function GUIDOf(loc)
-    return C_Item.GetItemGUID and C_Item.DoesItemExist(loc) and C_Item.GetItemGUID(loc)
+    if not (C_Item.GetItemGUID and loc and C_Item.DoesItemExist(loc)) then return end
+    return C_Item.GetItemGUID(loc)
 end
 
 function Modern.IsValidEnchantTarget(id, loc)
@@ -455,6 +514,7 @@ function Modern.IsValidEnchantTarget(id, loc)
     local guids = EnchantGUIDs(id)
     if not guids then return true end -- let the server decide
     local guid = GUIDOf(loc)
+    if not guid then return true end -- can't compare, so let the server decide
     for _, g in ipairs(guids) do
         if g == guid then return true end
     end
@@ -487,8 +547,8 @@ function Modern.EnchantTargets(id)
         end)
     else
         -- No list from the client: offer equipped gear (not shirt/tabard).
-        for slot = 1, 18 do
-            if slot ~= 4 then
+        for slot = 1, 19 do
+            if slot ~= 4 and slot ~= 19 then
                 local e = TargetEntry(ItemLocation:CreateFromEquipmentSlot(slot))
                 if e then list[#list + 1] = e end
             end
@@ -530,8 +590,9 @@ ns.BLIZZARD_FRAMES = BLIZZARD_FRAMES
 -- Names checked by /pwb debug.
 ns.MODERN_FUNCS = {
     "GetAllRecipeIDs", "GetRecipeInfo", "CraftRecipe", "GetRecipeSchematic",
+    "GetCraftableCount", "IsRecipeInSkillLine", "GetBaseProfessionInfo",
     "GetRecipeNumReagents", "GetRecipeReagentInfo", "GetCategories", "GetCategoryInfo",
-    "GetRecipeCooldown", "GetBaseProfessionInfo", "GetChildProfessionInfo",
+    "GetRecipeCooldown", "GetChildProfessionInfo",
     "GetTradeSkillLine", "GetRecipeOutputItemData", "GetRecipeItemLink",
     "GetRecipeLink", "IsTradeSkillReady", "CloseTradeSkill",
 }

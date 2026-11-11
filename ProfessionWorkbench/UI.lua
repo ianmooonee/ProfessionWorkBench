@@ -129,8 +129,12 @@ local function ShowTooltip(owner, fn)
     GameTooltip:Show()
 end
 
+-- ChatEdit_InsertLink is gone from newer clients; ChatFrameUtil carries it now.
+-- Resolved on each call so whichever exists at the time wins.
 local function InsertLink(link)
-    if link and ChatEdit_InsertLink then ChatEdit_InsertLink(link) end
+    if not link then return end
+    local fn = ChatEdit_InsertLink or (ChatFrameUtil and ChatFrameUtil.InsertLink)
+    if fn then fn(link) end
 end
 
 local function TargetExists(loc)
@@ -321,7 +325,7 @@ local function BuildToolbar(f)
 
     local best = CreateFrame("Button", nil, f)
     best:SetPoint("TOPLEFT", PAD + LIST_W + PAD + 2, -78)
-    best:SetPoint("RIGHT", f, "RIGHT", -PAD - 2, 0)
+    best:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD - 2, -78)
     best:SetHeight(18)
     best.text = Text(best, "GameFontHighlightSmall", C.muted)
     best.text:SetPoint("LEFT")
@@ -368,8 +372,9 @@ local function BuildList(f)
     for i = 1, MAX_ROWS do
         local row = CreateFrame("Button", nil, list)
         row:SetHeight(ROW_H)
-        row:SetPoint("TOPLEFT", 4, -4 - (i - 1) * ROW_H)
-        row:SetPoint("RIGHT", list, "RIGHT", -14, 0)
+        local y = -4 - (i - 1) * ROW_H
+        row:SetPoint("TOPLEFT", 4, y)
+        row:SetPoint("TOPRIGHT", list, "TOPRIGHT", -14, y)
 
         row.bg = row:CreateTexture(nil, "BACKGROUND")
         row.bg:SetAllPoints()
@@ -472,7 +477,7 @@ local function BuildDetail(f)
 
     c.name = Text(c, "GameFontNormalLarge")
     c.name:SetPoint("TOPLEFT", icon, "TOPRIGHT", 10, -1)
-    c.name:SetPoint("RIGHT", c, "RIGHT", -10, 0)
+    c.name:SetPoint("TOPRIGHT", c, "TOPRIGHT", -10, -1)
     c.name:SetWordWrap(false)
 
     c.diff = Text(c, "GameFontHighlightSmall")
@@ -505,8 +510,9 @@ local function BuildDetail(f)
     for j = 1, NUM_REAGENTS do
         local r = CreateFrame("Button", nil, c)
         r:SetHeight(22)
-        r:SetPoint("TOPLEFT", 10, -88 - (j - 1) * 22)
-        r:SetPoint("RIGHT", c, "RIGHT", -10, 0)
+        local ry = -88 - (j - 1) * 22
+        r:SetPoint("TOPLEFT", 10, ry)
+        r:SetPoint("TOPRIGHT", c, "TOPRIGHT", -10, ry)
         r.icon = r:CreateTexture(nil, "ARTWORK")
         r.icon:SetSize(18, 18)
         r.icon:SetPoint("LEFT")
@@ -585,8 +591,9 @@ local function BuildDetail(f)
     -- Enchant target: enchants that go on gear are applied straight to the
     -- item picked here (replaces the quantity / create controls).
     local er = CreateFrame("Frame", nil, c)
-    er:SetPoint("TOPLEFT", 10, y - 18)
-    er:SetPoint("RIGHT", c, "RIGHT", -10, 0)
+    local ey = y - 18
+    er:SetPoint("TOPLEFT", 10, ey)
+    er:SetPoint("TOPRIGHT", c, "TOPRIGHT", -10, ey)
     er:SetHeight(22)
     er:Hide()
 
@@ -666,7 +673,7 @@ local function BuildDetail(f)
         local yy = 10 + (NUM_CD_LINES - i) * 16
         local left = Text(d, "GameFontHighlightSmall", C.muted)
         left:SetPoint("BOTTOMLEFT", 10, yy)
-        left:SetPoint("RIGHT", d, "RIGHT", -90, 0)
+        left:SetPoint("BOTTOMRIGHT", d, "BOTTOMRIGHT", -90, yy)
         left:SetWordWrap(false)
         local right = Text(d, "GameFontHighlightSmall", C.cooldown)
         right:SetPoint("BOTTOMRIGHT", -10, yy)
@@ -1090,13 +1097,17 @@ end
 -- An item dropped on the slot (or clicked onto it from the cursor).
 function PW:DropEnchantTarget()
     local loc = C_Cursor and C_Cursor.GetCursorItem and C_Cursor.GetCursorItem()
-    ClearCursor()
-    if not loc or not self.selected then return end
-    if self.API.IsValidEnchantTarget(self.selected, loc) then
-        self:SetEnchantTarget(loc)
-    else
-        PW.Print("That item can't receive this enchant.")
+    if not loc or not self.selected then
+        ClearCursor()
+        return
     end
+    if not self.API.IsValidEnchantTarget(self.selected, loc) then
+        ClearCursor()
+        PW.Print("That item can't receive this enchant.")
+        return
+    end
+    ClearCursor()
+    self:SetEnchantTarget(loc)
 end
 
 function PW:DoEnchant()
@@ -1168,8 +1179,9 @@ local function BuildEnchantMenu(f)
     for i = 1, MENU_ROWS do
         local b = CreateFrame("Button", nil, m)
         b:SetHeight(MENU_ROW_H)
-        b:SetPoint("TOPLEFT", 4, -4 - (i - 1) * MENU_ROW_H)
-        b:SetPoint("RIGHT", m, "RIGHT", -4, 0)
+        local my = -4 - (i - 1) * MENU_ROW_H
+        b:SetPoint("TOPLEFT", 4, my)
+        b:SetPoint("TOPRIGHT", m, "TOPRIGHT", -4, my)
         b.bg = b:CreateTexture(nil, "BACKGROUND")
         b.bg:SetAllPoints()
         b.bg:SetTexture(WHITE)

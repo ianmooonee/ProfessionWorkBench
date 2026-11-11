@@ -5,7 +5,7 @@ local PW = {}
 ns.PW = PW
 _G.ProfessionWorkbench = PW -- handy for /dump while debugging
 
-PW.version = "0.7.1"
+PW.version = "0.7.2"
 
 local floor, max, format = math.floor, math.max, string.format
 

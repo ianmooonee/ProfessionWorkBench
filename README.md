@@ -4,7 +4,7 @@ A cleaner, flat dark replacement for the profession window in **World of Warcraf
 
 Open any profession as usual and Profession Workbench appears instead of the default window, with a searchable recipe list, skill-up colors at a glance, reagent counts that include your bank, and crafting cooldowns tracked across all your characters.
 
-> **Status:** early version (0.7.1), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
+> **Status:** early version (0.7.2), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
 
 ## Features
 
@@ -31,7 +31,7 @@ Open any profession as usual and Profession Workbench appears instead of the def
 **Cost and profit**
 - The details panel shows what one craft costs in reagents, what the result sells for after the 5% auction house cut, and the profit. Recipes missing a price say so rather than showing a fake number.
 - **Sort by profit** ranks the whole list by what one craft earns instead of grouping by category. Recipes with no price go last.
-- **Prices on item tooltips.** Hover any reagent, product or disenchant material and its vendor price, auction price (with age when it is over two days old) and disenchant value appear at the bottom. Hold **Alt** on any item to also see which of your recipes use it and what they earn.
+- **Prices on item tooltips.** Hover any item and its vendor price, auction price (with age when it is over two days old) and disenchant value appear at the bottom, whenever something is known. Hold **Alt** to also see which of your recipes use it and what they earn.
 - **Scan prices**, a button on the auction house window — prices every reagent and product of your known recipes, plus the disenchant materials, while the auction house is open. It sends a single browse query and reads every page, so it runs in seconds rather than minutes; the button shows how many of your items it has priced and stops it. `/pwb ahstop` also stops it, and `/pwb ahitem` prices just the item you are hovering.
 - Merchant visits fill in vendor prices automatically, and `/pwb price` or `/pwb scanitem` record anything you want by hand.
 - A manual price is never overwritten by learning, so it always wins.

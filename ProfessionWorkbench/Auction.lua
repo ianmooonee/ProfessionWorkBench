@@ -91,7 +91,7 @@ function PW:StartScan()
         Notify("Nothing to price: open a profession first so the addon knows your recipes.")
         return
     end
-    scan = { wanted = wantedSet, wantedCount = #wanted, seen = 0, pages = 0, priced = 0 }
+    scan = { wanted = wantedSet, wantedCount = #wanted, seen = 0, pages = 0, priced = 0, found = {} }
     Notify(format("Scanning the auction house for %d items of interest.", #wanted))
     self:SendBrowse()
 end
@@ -145,16 +145,16 @@ function PW:HarvestBrowse()
             -- minPrice is the cheapest listing of that item, per unit already.
             local price = r.minPrice
             if price and price > 0 and scan.wanted[itemID] then
+                scan.found[itemID] = true
                 local before = PW:UnitPrice(itemID)
                 PW:SetPrice(itemID, floor(price + 0.5), "ah")
                 if PW:UnitPrice(itemID) ~= before then newPrices = newPrices + 1 end
             end
         end
     end
+    -- Count only what this scan actually saw, so the number matches the target.
     scan.priced = 0
-    for itemID in pairs(scan.wanted) do
-        if PW:UnitPrice(itemID) then scan.priced = scan.priced + 1 end
-    end
+    for _ in pairs(scan.found) do scan.priced = scan.priced + 1 end
     if newPrices > 0 then self:UpdateAHButton() end
     return newPrices
 end
@@ -284,6 +284,6 @@ function PW:ScanHovered()
         return
     end
     -- A scan restricted to the one item.
-    scan = { wanted = { [itemID] = true }, wantedCount = 1, seen = 0, pages = 0, priced = 0 }
+    scan = { wanted = { [itemID] = true }, wantedCount = 1, seen = 0, pages = 0, priced = 0, found = {} }
     self:SendBrowse()
 end

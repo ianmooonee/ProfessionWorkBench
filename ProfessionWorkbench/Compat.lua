@@ -363,6 +363,25 @@ function Modern.Scan()
     return recipes
 end
 
+-- Recipes of the open profession this character hasn't learned yet, so an
+-- auction house scan can price everything the profession could make. Same
+-- filters as Scan, minus the learned check. (The classic API can't list
+-- unlearned recipes, so the Classic backend has no equivalent.)
+function Modern.UnlearnedRecipeIDs()
+    local ids = {}
+    if not Modern.IsReady() then return ids end
+    local lines = SkillLines()
+    for _, id in ipairs(List(S("GetAllRecipeIDs"))) do
+        local info = S("GetRecipeInfo", id)
+        if info and info.name and info.learned == false
+            and not info.isDummyRecipe and not info.isRecraft and not info.isGatheringRecipe
+            and InAnySkillLine(id, lines) then
+            ids[#ids + 1] = id
+        end
+    end
+    return ids
+end
+
 local function ItemReagent(itemID, need, bags)
     local name, link = GetItemInfoF(itemID)
     return {

@@ -41,6 +41,9 @@ local BODY_TOP = -104
 local FOOTER_H = 26
 local LIST_W = 340
 local ROW_H = 20
+-- Recipe row columns, from the right: craftable count / cooldown, then profit.
+local COUNT_W = 40
+local PROFIT_W = 66
 local MAX_W, MAX_H = 1600, 1200
 local MAX_ROWS = 60 -- rows created; how many are used depends on the window height
 local NUM_ROWS = floor(((H + BODY_TOP - FOOTER_H - PAD) - 8) / ROW_H)
@@ -128,6 +131,57 @@ function PW:ProfitColor(profit)
     if profit > 0 then return { 0.4, 0.9, 0.45 } end
     if profit < 0 then return { 0.95, 0.4, 0.4 } end
     return C.muted
+end
+
+local function Hex(col)
+    return format("%02x%02x%02x", col[1] * 255, col[2] * 255, col[3] * 255)
+end
+
+-- Short profit label for a list row: "+1g 20s", "-35s", or a muted "?" when
+-- the output has no price. A "~" marks a figure missing some reagent prices.
+function PW:ProfitText(r)
+    if r.profit == nil then return "|cff9a9aa0?|r" end
+    local text = (r.profit >= 0 and "+" or "") .. PW.Money(r.profit, true)
+    if r.profitComplete == false then text = "~" .. text end
+    return "|cff" .. Hex(self:ProfitColor(r.profit)) .. text .. "|r"
+end
+
+-- Cost, sell value and margin for one craft, for the row tooltip.
+function PW:AddProfitTooltip(tt, r)
+    local d = DIFF[r.difficulty] or FALLBACK
+    tt:AddLine(r.name, unpack(d.color))
+
+    local cost, costComplete = self:CraftCost(r.index)
+    local value = self:OutputValue(r.index)
+    local L, V = { 0.6, 0.6, 0.62 }, { 0.9, 0.9, 0.9 }
+
+    if cost and (cost > 0 or costComplete) then
+        tt:AddDoubleLine("Reagent cost", PW.Money(cost, true) .. (costComplete and "" or "+"),
+            L[1], L[2], L[3], V[1], V[2], V[3])
+    else
+        tt:AddDoubleLine("Reagent cost", "no prices", L[1], L[2], L[3], L[1], L[2], L[3])
+    end
+    if value then
+        tt:AddDoubleLine("Sells for (after AH cut)", PW.Money(value, true),
+            L[1], L[2], L[3], V[1], V[2], V[3])
+    else
+        tt:AddDoubleLine("Sells for", "no price", L[1], L[2], L[3], L[1], L[2], L[3])
+    end
+
+    if r.profit ~= nil then
+        local col = self:ProfitColor(r.profit)
+        local margin = (r.profit >= 0 and "+" or "") .. PW.Money(r.profit, true)
+        if cost and cost > 0 then
+            margin = margin .. format("  (%+d%%)", floor(r.profit / cost * 100 + 0.5))
+        end
+        tt:AddDoubleLine(r.profit >= 0 and "Profit" or "Loss", margin,
+            L[1], L[2], L[3], col[1], col[2], col[3])
+    end
+    if not costComplete and cost then
+        tt:AddLine("Some reagents have no price yet, so the real cost is higher.", 0.7, 0.7, 0.7, true)
+    elseif r.profit == nil then
+        tt:AddLine("Scan the auction house, visit a merchant, or use /pwb price to fill in prices.", 0.7, 0.7, 0.7, true)
+    end
 end
 
 local function ShowTooltip(owner, fn)
@@ -430,18 +484,30 @@ local function BuildList(f)
 
         row.name = Text(row, "GameFontHighlightSmall")
         row.name:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
-        row.name:SetPoint("RIGHT", row, "RIGHT", -62, 0)
+        row.name:SetPoint("RIGHT", row, "RIGHT", -(4 + COUNT_W + 6 + PROFIT_W + 4), 0)
         row.name:SetWordWrap(false)
 
+        -- Rightmost: how many you can craft, or the cooldown left.
         row.right = Text(row, "GameFontHighlightSmall")
         row.right:SetPoint("RIGHT", -4, 0)
+        row.right:SetWidth(COUNT_W)
         row.right:SetJustifyH("RIGHT")
+
+        -- Next to it: profit or loss per craft.
+        row.profit = Text(row, "GameFontHighlightSmall")
+        row.profit:SetPoint("RIGHT", row.right, "LEFT", -6, 0)
+        row.profit:SetWidth(PROFIT_W)
+        row.profit:SetJustifyH("RIGHT")
+        row.profit:SetWordWrap(false)
 
         row:SetScript("OnClick", function(self) PW:OnRowClick(self) end)
         row:SetScript("OnEnter", function(self)
             local item = self.item
             if not item then return end
             if not self.isSelected then self.bg:SetVertexColor(unpack(C.hover)) end
+            if item.kind == "recipe" then
+                ShowTooltip(self, function(tt) PW:AddProfitTooltip(tt, item.r) end)
+            end
         end)
         row:SetScript("OnLeave", function(self)
             if not self.isSelected then self.bg:SetVertexColor(0, 0, 0, 0) end
@@ -1178,6 +1244,7 @@ function PW:UpdateList()
                 row.name:SetText((self:IsCollapsed(item.name) and "+  " or "-  ") .. item.name)
                 row.name:SetTextColor(unpack(C.header))
                 row.right:SetText("")
+                row.profit:SetText("")
                 row.bg:SetVertexColor(0, 0, 0, 0)
             else
                 local r = item.r
@@ -1190,18 +1257,11 @@ function PW:UpdateList()
                 row.name:SetText(r.name)
                 row.name:SetTextColor(unpack(d.color))
 
+                row.profit:SetText(self:ProfitText(r))
+
                 local right = ""
                 if r.cooldownEnds and r.cooldownEnds > now then
                     right = "|cffffb84d" .. PW.FormatTime(r.cooldownEnds - now) .. "|r"
-                elseif self.db.sortProfit then
-                    if r.profit == nil then
-                        right = "|cff9a9aa0no price|r"
-                    else
-                        local col = self:ProfitColor(r.profit)
-                        right = format("|cff%02x%02x%02x%s%s|r",
-                            col[1] * 255, col[2] * 255, col[3] * 255,
-                            r.profit >= 0 and "+" or "", PW.Money(r.profit, true))
-                    end
                 else
                     local n = r.numAvailable
                     local nb = self.db.filters.useBank and Craftable(r) or n
@@ -1670,6 +1730,7 @@ function PW:Refresh()
 
     self.recipes, self.byIndex = self:Scan()
     self:RecordCooldowns(name, self.recipes)
+    self:RememberProfessionItems(name, self.recipes)
 
     if not (self.selected and self.byIndex[self.selected]) then
         self.selected = nil

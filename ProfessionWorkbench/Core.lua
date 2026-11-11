@@ -164,7 +164,9 @@ function PW:Scan()
         if n == nil then n = r.numAvailable end
         if n == nil then n = self:CraftableFromBags(r.index) end
         r.numAvailable = n or 0
-        r.profit = select(1, self:Profit(r.index))
+        -- profitComplete is false when some reagent has no price, so the
+        -- figure is an upper bound rather than the real margin.
+        r.profit, r.profitComplete = self:Profit(r.index)
     end
     -- Rebuild the reagent -> recipe map so the queue can find intermediates,
     -- and drop the tooltip caches, which depend on recipes and profits.
@@ -724,6 +726,30 @@ SlashCmdList.PROFWORKBENCH = function(msg)
     elseif msg:match("^ahscan%f[%A]") or msg == "ahscan" then
         PW:StartScan()
 
+    elseif msg == "ahlist" then
+        local profs = PW:RememberedProfessions()
+        if #profs == 0 then
+            Print("No professions remembered yet. Open each of your professions once, then scan.")
+        else
+            local total = select(1, PW:ScanTargets())
+            Print(format("An auction house scan looks for %d items:", #total))
+            for _, p in ipairs(profs) do
+                print(format("  %s: %d items from %d learned + %d unlearned recipes (updated %s)",
+                    p.name, p.items, p.recipes or 0, p.unlearned or 0, PW.Age(p.at and (time() - p.at))))
+            end
+            print(format("  Disenchanting materials: %d items", #(PW.DE_MATERIALS or {})))
+            print("  /pwb ahforget <profession> removes one, e.g. a profession you dropped.")
+        end
+
+    elseif msg:match("^ahforget") then
+        local name = msg:match("^ahforget%s+(.+)$")
+        local removed = name and PW:ForgetProfession(name)
+        if removed then
+            Print(removed .. " won't be scanned any more. Opening it again adds it back.")
+        else
+            Print("Usage: /pwb ahforget <profession>. /pwb ahlist shows what's remembered.")
+        end
+
     elseif msg:match("^ahstop") then
         if PW:IsScanning() then PW:StopScan(false) else Print("No scan is running.") end
 
@@ -775,6 +801,7 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         print("  /pwb queue [<count>] [<recipe>] - add to the craft queue")
         print("  /pwb queueclear - empty the craft queue")
         print("  /pwb price <itemID> <gold> - set an item's price by hand")
+        print("  /pwb ahlist - which professions an auction house scan covers")
         print("  /pwb debug - show client and API info")
         print(" ")
         print("Prices, and the recipes that use an item, also appear on item tooltips.")

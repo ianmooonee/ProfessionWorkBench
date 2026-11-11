@@ -49,6 +49,72 @@ local PAGE_DELAY = 0.2
 -- What we want to price
 ---------------------------------------------------------------------------
 
+-- Every item a list of recipes makes or uses. Reads the API directly (no bank
+-- counts needed), since this can cover hundreds of unlearned recipes.
+local function ItemsOf(self, recipes)
+    local ids, seen = {}, {}
+    for _, r in ipairs(recipes or {}) do
+        local out = self.API.OutputItemID and self.API.OutputItemID(r.index)
+        if out and not seen[out] then seen[out] = true; ids[#ids + 1] = out end
+        for _, rg in ipairs(self.API.GetReagents(r.index)) do
+            local id = rg.itemID or PW.ItemIDFromLink(rg.link)
+            if id and not seen[id] then seen[id] = true; ids[#ids + 1] = id end
+        end
+    end
+    return ids
+end
+
+-- Remember what a profession makes and uses, per character, so a scan at the
+-- auction house covers every profession this character has opened rather than
+-- only the last one. Refreshed at most every 30 seconds per profession, since
+-- the window refreshes on every bag change.
+local REMEMBER_EVERY = 30
+function PW:RememberProfessionItems(profession, recipes)
+    if not profession or not self.charDB or not recipes or #recipes == 0 then return end
+    self.charDB.scanItems = self.charDB.scanItems or {}
+    local entry = self.charDB.scanItems[profession]
+    if entry and entry.at and (time() - entry.at) < REMEMBER_EVERY then return end
+
+    -- Learned recipes, plus the ones not learned yet when the API can list
+    -- them, so prices are ready before you train a recipe.
+    local all = {}
+    for i, r in ipairs(recipes) do all[i] = r end
+    local unlearned = self.API.UnlearnedRecipeIDs and self.API.UnlearnedRecipeIDs() or {}
+    for _, id in ipairs(unlearned) do all[#all + 1] = { index = id } end
+
+    local items = ItemsOf(self, all)
+    if #items == 0 then return end
+    self.charDB.scanItems[profession] = {
+        items = items, recipes = #recipes, unlearned = #unlearned, at = time(),
+    }
+end
+
+-- Professions this character has items remembered for, sorted by name.
+function PW:RememberedProfessions()
+    local list = {}
+    for prof, entry in pairs(self.charDB and self.charDB.scanItems or {}) do
+        list[#list + 1] = {
+            name = prof, items = #(entry.items or {}),
+            recipes = entry.recipes, unlearned = entry.unlearned, at = entry.at,
+        }
+    end
+    table.sort(list, function(a, b) return a.name < b.name end)
+    return list
+end
+
+function PW:ForgetProfession(name)
+    local store = self.charDB and self.charDB.scanItems
+    if not store or not name then return end
+    local wanted = name:lower()
+    for prof in pairs(store) do
+        if prof:lower() == wanted then
+            store[prof] = nil
+            return prof
+        end
+    end
+end
+
+-- Returns the item list, a set of the same items, and the profession names.
 function PW:ScanTargets()
     local seen, list = {}, {}
     local function Add(itemID)
@@ -57,14 +123,15 @@ function PW:ScanTargets()
             list[#list + 1] = itemID
         end
     end
-    for _, r in ipairs(self.recipes or {}) do
-        Add(self.API.OutputItemID and self.API.OutputItemID(r.index))
-        for _, rg in ipairs(self:GetReagents(r.index)) do
-            Add(rg.itemID or PW.ItemIDFromLink(rg.link))
-        end
+    local profs = {}
+    for _, p in ipairs(self:RememberedProfessions()) do
+        profs[#profs + 1] = p.name
+        for _, id in ipairs(self.charDB.scanItems[p.name].items or {}) do Add(id) end
     end
+    -- The open profession too, in case it hasn't been remembered yet.
+    for _, id in ipairs(ItemsOf(self, self.recipes)) do Add(id) end
     for _, itemID in ipairs(PW.DE_MATERIALS or {}) do Add(itemID) end
-    return list, seen
+    return list, seen, profs
 end
 
 ---------------------------------------------------------------------------
@@ -115,13 +182,14 @@ function PW:StartScan()
         Notify("A scan is already running. Click the button again, or /pwb ahstop, to cancel it.")
         return
     end
-    local wanted, wantedSet = self:ScanTargets()
-    if #wanted == 0 then
-        Notify("Nothing to price: open a profession first so the addon knows your recipes.")
+    local wanted, wantedSet, profs = self:ScanTargets()
+    if #profs == 0 and #(self.recipes or {}) == 0 then
+        Notify("Open each of your professions once first, so the addon knows what to price.")
         return
     end
     scan = NewScan(wantedSet, #wanted)
-    Notify(format("Scanning the auction house for %d items of interest.", #wanted))
+    Notify(format("Scanning the auction house for %d items (%s, plus disenchanting materials).",
+        #wanted, #profs > 0 and table.concat(profs, ", ") or (self.profession or "open profession")))
     self:UpdateAHButton()
     self:SendBrowse()
 end

@@ -5,7 +5,7 @@ local PW = {}
 ns.PW = PW
 _G.ProfessionWorkbench = PW -- handy for /dump while debugging
 
-PW.version = "0.6.1"
+PW.version = "0.6.2"
 
 local floor, max, format = math.floor, math.max, string.format
 
@@ -429,9 +429,7 @@ for _, e in ipairs({
     "PLAYERBANKSLOTS_CHANGED", "GET_ITEM_INFO_RECEIVED",
     "MERCHANT_SHOW", "MERCHANT_UPDATE",
     "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED",
-    "AUCTION_HOUSE_THROTTLED_SYSTEM_READY",
-    "COMMODITY_SEARCH_RESULTS_UPDATED", "COMMODITY_SEARCH_RESULTS_ADDED",
-    "ITEM_SEARCH_RESULTS_UPDATED", "ITEM_SEARCH_RESULTS_ADDED",
+    "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED", "AUCTION_HOUSE_BROWSE_RESULTS_ADDED",
 }) do
     pcall(events.RegisterEvent, events, e) -- tolerate events this client lacks
 end
@@ -535,11 +533,6 @@ function PW:MERCHANT_UPDATE()
     self:ScanMerchant()
 end
 
--- The auction house closed under a running scan: stop cleanly.
-function PW:AUCTION_HOUSE_CLOSED()
-    if self:IsScanning() then self:StopScan(false) end
-end
-
 function PW:PrintDisposition(itemID)
     local f = self:ItemFacts(itemID)
     if not f then
@@ -569,6 +562,8 @@ end
 SLASH_PROFWORKBENCH1 = "/pwb"
 SlashCmdList.PROFWORKBENCH = function(msg)
     msg = (msg or ""):lower():match("^%s*(.-)%s*$")
+    -- This is a plain function: there is no self, so use PW explicitly.
+    local self = PW
 
     if msg == "blizz" or msg == "blizzard" then
         PW:SetUseBlizzard(not PW.db.useBlizzard)
@@ -645,16 +640,16 @@ SlashCmdList.PROFWORKBENCH = function(msg)
             local count, name = arg:match("^(%d+)%s+(.+)$")
             name = name or arg
             count = tonumber(count) or 1
-            local found = self:FindRecipeByName(name)
+            local found = PW:FindRecipeByName(name)
             if found then
-                self:AddToQueue(found.index, count)
+                PW:AddToQueue(found.index, count)
                 Print(format("Queued %dx %s.", count, found.name))
                 if PW.frame and PW.frame:IsShown() then PW:RefreshQueue() end
             else
                 Print("No recipe called \"" .. name .. "\" here. Open the right profession first.")
             end
         elseif r then
-            self:AddToQueue(r.index, 1)
+            PW:AddToQueue(r.index, 1)
             Print(format("Queued 1x %s. Type /pwb queue <count> <recipe> to add more.", r.name))
             if PW.frame and PW.frame:IsShown() then PW:RefreshQueue() end
         else
@@ -663,21 +658,21 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         end
 
     elseif msg == "queueclear" then
-        self:ClearQueue()
+        PW:ClearQueue()
         Print("Craft queue cleared.")
         if PW.frame and PW.frame:IsShown() then PW:RefreshQueue() end
 
     elseif msg == "list" or msg == "shopping" then
-        local queue = self:Queue()
+        local queue = PW:Queue()
         if #queue == 0 then
             Print("The craft queue is empty. Add something with /pwb queue.")
         elseif not self.recipes then
             -- The shopping list needs the profession open to resolve recipes.
-            Print(format("The queue has %d crafts. Open the profession to see what is missing.", self:QueueCount()))
+            Print(format("The queue has %d crafts. Open the profession to see what is missing.", PW:QueueCount()))
             for _, q in ipairs(queue) do print(format("  %dx %s", q.count, q.name)) end
         else
-            Print(format("Shopping list for %d queued crafts:", self:QueueCount()))
-            local list = self:ShoppingList(queue, self.db.filters.useBank)
+            Print(format("Shopping list for %d queued crafts:", PW:QueueCount()))
+            local list = PW:ShoppingList(queue, self.db.filters.useBank)
             if #list == 0 then
                 print("  Everything needed is already in your bags.")
             end
@@ -691,7 +686,7 @@ SlashCmdList.PROFWORKBENCH = function(msg)
     elseif msg:match("^scanitem%f[%A]") or msg == "scanitem" then
         local amount = msg:match("^scanitem%s+(%S+)$")
         local gold = amount and tonumber(amount:match("^([%d%.]+)"))
-        local ok, text = self:PriceHovered(gold)
+        local ok, text = PW:PriceHovered(gold)
         Print(text)
         if ok and PW.frame and PW.frame:IsShown() then PW:Refresh() end
 
@@ -699,7 +694,7 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         local arg = msg:match("^de%s+(.+)$")
         if not arg then
             -- No argument: use the hovered item, else the selected recipe's output.
-            local hovered = self:HoveredItem()
+            local hovered = PW:HoveredItem()
             local itemID = hovered
             if not itemID and self.selected and self.byIndex[self.selected] then
                 itemID = self.API.OutputItemID and self.API.OutputItemID(self.selected)
@@ -707,10 +702,10 @@ SlashCmdList.PROFWORKBENCH = function(msg)
             if not itemID then
                 Print("Usage: /pwb de <itemID or item name>  - or hover an item and type /pwb de")
             else
-                self:PrintDisposition(itemID)
+                PW:PrintDisposition(itemID)
             end
         elseif tonumber(arg) then
-            self:PrintDisposition(tonumber(arg))
+            PW:PrintDisposition(tonumber(arg))
         else
             -- Look the name up among the recipes we can see.
             local found
@@ -722,20 +717,20 @@ SlashCmdList.PROFWORKBENCH = function(msg)
                 end
             end
             if found then
-                self:PrintDisposition(found)
+                PW:PrintDisposition(found)
             else
                 Print("No item called \"" .. arg .. "\" in this profession's recipes.")
             end
         end
 
     elseif msg:match("^ahscan%f[%A]") or msg == "ahscan" then
-        self:StartScan()
+        PW:StartScan()
 
     elseif msg:match("^ahstop") then
-        if self:IsScanning() then self:StopScan(false) else Print("No scan is running.") end
+        if PW:IsScanning() then PW:StopScan(false) else Print("No scan is running.") end
 
     elseif msg:match("^ahstatus") then
-        local done, total, failed = self:ScanProgress()
+        local done, total, failed = PW:ScanProgress()
         if not done then
             Print("No scan is running.")
         else
@@ -743,7 +738,7 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         end
 
     elseif msg:match("^ahitem") then
-        self:ScanHovered()
+        PW:ScanHovered()
 
     elseif msg == "ahhelp" then
         Print("Auction house:")

@@ -1260,7 +1260,11 @@ function PW:UpdateSummary()
         if rank and maxRank and maxRank > 0 and rank >= maxRank then
             f.best.text:SetText("Skill is at the cap for your current rank. Train the next rank to keep leveling.")
         else
-            f.best.text:SetText("No orange or yellow recipe is craftable from your bags right now.")
+            if counts.optimal + counts.medium > 0 then
+                f.best.text:SetText("You don't have the reagents in your bags for any orange or yellow recipe.")
+            else
+                f.best.text:SetText("No orange or yellow recipes left. Learn new ones to keep leveling.")
+            end
         end
         f.best.index = nil
     end

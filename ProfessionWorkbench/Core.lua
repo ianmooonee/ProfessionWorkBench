@@ -132,7 +132,14 @@ end
 function PW:Scan()
     local recipes = API.Scan()
     local byIndex = {}
-    for _, r in ipairs(recipes) do byIndex[r.index] = r end
+    for _, r in ipairs(recipes) do
+        byIndex[r.index] = r
+        -- C_TradeSkillUI's numAvailable can be 0 even with every reagent in
+        -- the bags, so double-check it against the reagent counts.
+        if API.kind ~= "classic" then
+            r.numAvailable = max(r.numAvailable or 0, self:CraftableFromBags(r.index))
+        end
+    end
     return recipes, byIndex
 end
 

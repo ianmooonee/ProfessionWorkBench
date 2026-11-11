@@ -123,6 +123,13 @@ local function Toggle(parent, label, key, width)
     return b
 end
 
+function PW:ProfitColor(profit)
+    if profit == nil then return C.muted end
+    if profit > 0 then return { 0.4, 0.9, 0.45 } end
+    if profit < 0 then return { 0.95, 0.4, 0.4 } end
+    return C.muted
+end
+
 local function ShowTooltip(owner, fn)
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
     fn(GameTooltip)
@@ -278,6 +285,21 @@ local function BuildToolbar(f)
     ca:SetPoint("LEFT", search, "RIGHT", 6, 0)
     ca:SetScript("OnClick", function() PW:ToggleCollapseAll() end)
     f.collapseAll = ca
+
+    -- Sort by profit replaces the category grouping with one flat, ranked list.
+    local ps = FlatButton(f, "Sort by profit", 86, 22)
+    ps:SetPoint("LEFT", search, "RIGHT", 6, 0)
+    ps:SetScript("OnClick", function() PW:ToggleProfitSort() end)
+    ps:SetScript("OnEnter", function(self)
+        ShowTooltip(self, function(tt)
+            tt:AddLine("Sort by profit")
+            tt:AddLine("Ranks every recipe by what one craft earns, using the prices you have. Recipes with no price go last.", 1, 1, 1, true)
+            tt:AddLine("Set prices with /pwb price, or visit a merchant to learn vendor prices.", 0.7, 0.7, 0.7, true)
+        end)
+    end)
+    ps:SetScript("OnLeave", GameTooltip_Hide)
+    ps:Hide()
+    f.profitSort = ps
 
     -- Difficulty chips
     f.chips = {}
@@ -547,6 +569,11 @@ local function BuildDetail(f)
     c.craftable = Text(c, "GameFontHighlightSmall", C.muted)
     c.craftable:SetPoint("TOPLEFT", 10, y)
 
+    -- Cost / value / profit, filled in by UpdateProfit once prices exist.
+    c.profit = Text(c, "GameFontHighlightSmall", C.muted)
+    c.profit:SetPoint("TOPRIGHT", -10, y)
+    c.profit:SetJustifyH("RIGHT")
+
     local minus = FlatButton(c, "-", 22, 22)
     minus:SetPoint("TOPLEFT", 10, y - 18)
     local qty = CreateFrame("EditBox", nil, c, BT)
@@ -793,6 +820,7 @@ function PW:UpdateFilterWidgets()
     end
     f.haveMats.fill:SetShown(fl.haveMats)
     f.useBank.fill:SetShown(fl.useBank)
+    f.profitSort:SetShown(self.db.sortProfit or false)
 end
 
 local function Craftable(r)
@@ -846,6 +874,12 @@ function PW:AnyExpanded()
     return false
 end
 
+function PW:ToggleProfitSort()
+    self.db.sortProfit = not self.db.sortProfit
+    self.offset = 0
+    self:RebuildList()
+end
+
 function PW:ToggleCollapseAll()
     local collapse = self:AnyExpanded()
     for _, h in ipairs(self:Headers()) do
@@ -857,21 +891,43 @@ end
 
 function PW:RebuildList()
     if not self.frame then return end
+    local recipes = self.recipes
+    -- Sorting by profit reshuffles across categories, so show a flat list.
+    local byProfit = self.db.sortProfit
+    if byProfit then
+        recipes = {}
+        for _, r in ipairs(self.recipes) do
+            if self:Matches(r) then recipes[#recipes + 1] = r end
+        end
+        table.sort(recipes, function(a, b)
+            local pa, pb = a.profit, b.profit
+            -- Recipes with no price go last, never treated as 0 profit.
+            if pa == nil and pb == nil then return a.name < b.name end
+            if pa == nil then return false end
+            if pb == nil then return true end
+            if pa ~= pb then return pa > pb end
+            return a.name < b.name
+        end)
+    end
+
     local display = {}
     local lastHeader
-    for _, r in ipairs(self.recipes) do
-        if self:Matches(r) then
-            if r.header and r.header ~= lastHeader then
+    for _, r in ipairs(recipes) do
+        local show = byProfit or self:Matches(r)
+        if show then
+            if not byProfit and r.header and r.header ~= lastHeader then
                 display[#display + 1] = { kind = "header", name = r.header }
             end
             lastHeader = r.header
-            if not self:IsCollapsed(r.header) then
+            if byProfit or not self:IsCollapsed(r.header) then
                 display[#display + 1] = { kind = "recipe", r = r }
             end
         end
     end
     self.display = display
     self.frame.collapseAll.label:SetText(self:AnyExpanded() and "Collapse all" or "Expand all")
+    self.frame.collapseAll:SetShown(not byProfit)
+    self.frame.profitSort:SetShown(byProfit)
     self:UpdateList()
 end
 
@@ -920,6 +976,15 @@ function PW:UpdateList()
                 local right = ""
                 if r.cooldownEnds and r.cooldownEnds > now then
                     right = "|cffffb84d" .. PW.FormatTime(r.cooldownEnds - now) .. "|r"
+                elseif self.db.sortProfit then
+                    if r.profit == nil then
+                        right = "|cff9a9aa0no price|r"
+                    else
+                        local col = self:ProfitColor(r.profit)
+                        right = format("|cff%02x%02x%02x%s%s|r",
+                            col[1] * 255, col[2] * 255, col[3] * 255,
+                            r.profit >= 0 and "+" or "", PW.Money(r.profit, true))
+                    end
                 else
                     local n = r.numAvailable
                     local nb = self.db.filters.useBank and Craftable(r) or n
@@ -1062,6 +1127,7 @@ function PW:UpdateDetail()
         end
     end
     c.craftable:SetText(text)
+    self:UpdateProfit(r)
 
     local onCooldown = r.cooldownEnds and r.cooldownEnds > GetTime()
     local can = r.numAvailable > 0 and not onCooldown
@@ -1074,6 +1140,47 @@ function PW:UpdateDetail()
     c.enchantRow:SetShown(enchantMode)
     if not enchantMode and self.enchantMenu then self.enchantMenu:Hide() end
     self:UpdateEnchantRow()
+end
+
+---------------------------------------------------------------------------
+-- Profit
+---------------------------------------------------------------------------
+
+-- Cost of the reagents, what the output sells for after the cut, and the
+-- difference. Recipes with no prices say so instead of showing a fake number.
+function PW:UpdateProfit(r)
+    local f = self.frame
+    local c = f and f.detail.content
+    if not c or not c.profit then return end
+
+    local cost, costComplete = self:CraftCost(r.index)
+    local value, valueComplete = self:OutputValue(r.index)
+    if not cost and not value then
+        c.profit:SetText("|cff9a9aa0No prices yet|r")
+        return
+    end
+
+    local parts = {}
+    if cost then
+        parts[#parts + 1] = format("cost %s%s", PW.Money(cost, true), costComplete and "" or "+")
+    end
+    if value then
+        parts[#parts + 1] = format("sells %s", PW.Money(value, true))
+    end
+    local line = table.concat(parts, "  ")
+
+    local profit = (cost and value) and (value - cost) or nil
+    if profit then
+        local col = self:ProfitColor(profit)
+        local sign = profit >= 0 and "+" or ""
+        line = line .. format("  |cff%s%s%s|r",
+            format("%02x%02x%02x", col[1] * 255, col[2] * 255, col[3] * 255),
+            sign, PW.Money(profit, true))
+        if not (costComplete and valueComplete) then
+            line = line .. "|cff9a9aa0?|r"
+        end
+    end
+    c.profit:SetText(line)
 end
 
 ---------------------------------------------------------------------------

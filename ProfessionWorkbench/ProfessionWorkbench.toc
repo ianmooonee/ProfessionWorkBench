@@ -6,4 +6,5 @@
 
 Compat.lua
 Core.lua
+Prices.lua
 UI.lua

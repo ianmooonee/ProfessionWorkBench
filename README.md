@@ -28,6 +28,13 @@ Open any profession as usual and Profession Workbench appears instead of the def
 - Quantity box with `-` / `+`, **Create** and **Create all** buttons.
 - Enchants that go on gear get an item slot instead: click it to pick an item from your equipped gear or bags (or drag an item onto it), then click **Enchant**. Right-click the slot to clear it. Needs a client with `C_TradeSkillUI.CraftEnchant`.
 
+**Cost and profit**
+- The details panel shows what one craft costs in reagents, what the result sells for after the 5% auction house cut, and the profit. Recipes missing a price say so rather than showing a fake number.
+- **Sort by profit** ranks the whole list by what one craft earns instead of grouping by category. Recipes with no price go last.
+- Prices come from merchant visits (vendor prices are learned whenever you open a merchant) and from `/pwb price` for anything you want to fix by hand. Auction house scanning is not in yet; until it is, set prices by hand or rely on the vendor ones.
+- A manual price is never overwritten by learning, so it always wins.
+- Prices are saved per account, so the numbers work on any character and away from the auction house.
+
 **Cooldowns**
 - Cooldown recipes (transmutes, Mooncloth and so on) are recorded whenever you open the profession, for every character.
 - The bottom of the window lists them with time left or **Ready**, and you get a chat reminder at login the first time each one becomes ready. Entries are cleared a day after they finish, so the reminder doesn't repeat.
@@ -63,6 +70,9 @@ Open a profession the normal way (spellbook or action bar). The window is movabl
 | `/pwb blizz` | Switch between Profession Workbench and the default Blizzard window (same as the **Default UI** / **Use Workbench** buttons) |
 | `/pwb cd` | List tracked cooldowns for all characters |
 | `/pwb scale <0.6-2>` | Change the window size (e.g. `/pwb scale 1.3`); the `-` / `+` buttons in the title bar do the same |
+| `/pwb price <itemID> <gold>` | Set an item's price by hand, e.g. `/pwb price 2592 1.5` for Wool Cloth at 1g 50s |
+| `/pwb prices` | List every stored price with its source and age |
+| `/pwb price clear <itemID>` | Forget a manually set price |
 | `/pwb reset` | Move the window back to the center of the screen and restore its default size |
 | `/pwb debug` | Print client version and API info (useful for bug reports) |
 

@@ -31,6 +31,7 @@ PW.API = API
 local defaults = {
     useBlizzard = false,
     scale = 1,
+    sortProfit = false,
     filters = {
         optimal = true,
         medium = true,
@@ -41,6 +42,7 @@ local defaults = {
     },
     collapsed = {}, -- [profession] = { [category] = true }
     chars = {},
+    prices = {}, -- account-wide: [itemID] = { unit, source, at }
 }
 
 local function CopyDefaults(src, dst)
@@ -161,8 +163,15 @@ function PW:Scan()
         if n == nil then n = r.numAvailable end
         if n == nil then n = self:CraftableFromBags(r.index) end
         r.numAvailable = n or 0
+        r.profit = select(1, self:Profit(r.index))
     end
     return recipes, byIndex
+end
+
+-- How many of the item one craft makes, for valuing the output.
+function PW:AmountMade(index)
+    local lo = API.NumMade(index)
+    return max(lo or 1, 1)
 end
 
 function PW:GetReagents(index)
@@ -415,6 +424,7 @@ for _, e in ipairs({
     "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_DATA_SOURCE_CHANGED", "NEW_RECIPE_LEARNED",
     "BAG_UPDATE_DELAYED", "BANKFRAME_OPENED", "BANKFRAME_CLOSED",
     "PLAYERBANKSLOTS_CHANGED", "GET_ITEM_INFO_RECEIVED",
+    "MERCHANT_SHOW", "MERCHANT_UPDATE",
 }) do
     pcall(events.RegisterEvent, events, e) -- tolerate events this client lacks
 end
@@ -508,6 +518,16 @@ function PW:GET_ITEM_INFO_RECEIVED()
     self:RequestRefresh()
 end
 
+-- Merchant prices are fixed, so every visit fills in more of the catalogue.
+function PW:MERCHANT_SHOW()
+    local learned = self:ScanMerchant()
+    if learned and learned > 0 then self:RequestRefresh() end
+end
+
+function PW:MERCHANT_UPDATE()
+    self:ScanMerchant()
+end
+
 ---------------------------------------------------------------------------
 -- Slash command
 ---------------------------------------------------------------------------
@@ -532,6 +552,59 @@ SlashCmdList.PROFWORKBENCH = function(msg)
             Print(format("Window scale set to %.2f.", PW:SetScale(arg)))
         end
 
+    elseif msg:match("^price") then
+        local rest = msg:match("^price%s+(.+)$")
+        if not rest then
+            Print("Usage: /pwb price <itemID> <gold>  - set a price by hand, e.g. /pwb price 2592 1.5")
+            Print("       /pwb price clear <itemID>  - forget a manual price")
+            Print("       /pwb prices  - list what is known")
+        else
+            local id, amount = rest:match("^(%d+)%s+(.+)$")
+            local clearID = rest:match("^clear%s+(%d+)$")
+            if clearID then
+                id = tonumber(clearID)
+                local p = PW:Prices()[id]
+                if p then
+                    PW:Prices()[id] = nil
+                    Print("Forgot the price for item " .. id .. ".")
+                else
+                    Print("No price stored for item " .. id .. ".")
+                end
+            elseif id and amount then
+                id = tonumber(id)
+                local gold = tonumber(amount:match("^([%d%.]+)"))
+                if not gold then
+                    Print("That price doesn't look like a number. Try /pwb price 2592 1.5")
+                else
+                    local copper = floor(gold * 10000 + 0.5)
+                    PW:SetPrice(id, copper, "manual", true)
+                    local name = C_Item and C_Item.GetItemInfo and select(1, C_Item.GetItemInfo(id))
+                    Print(format("Price set: %s = %s each.", name or ("item " .. id), PW.Money(copper)))
+                    if PW.frame and PW.frame:IsShown() then PW:Refresh() end
+                end
+            else
+                Print("Usage: /pwb price <itemID> <gold>, e.g. /pwb price 2592 1.5")
+            end
+        end
+
+    elseif msg == "prices" then
+        local prices, list = PW:Prices(), {}
+        for id in pairs(prices) do list[#list + 1] = id end
+        table.sort(list)
+        if #list == 0 then
+            Print("No prices stored yet.")
+            print("  Visit a merchant to learn vendor prices, or set one with /pwb price <itemID> <gold>.")
+        else
+            Print(format("%d prices stored:", #list))
+            for _, id in ipairs(list) do
+                local p = prices[id]
+                local name = C_Item and C_Item.GetItemInfo and select(1, C_Item.GetItemInfo(id))
+                print(format("  %s - %s each (%s, %s)%s",
+                    name or ("item " .. id), PW.Money(p.unit), p.source or "?",
+                    PW.Age(p.at and (time() - p.at)), PW:IsStale(id) and " |cffff5959stale|r" or ""))
+            end
+        end
+
     elseif msg == "reset" then
         PW.db.point = nil
         PW.db.size = nil
@@ -551,6 +624,7 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         local version, build, _, toc = GetBuildInfo()
         Print(format("v%s, client %s (%s), interface %s", PW.version, tostring(version), tostring(build), tostring(toc)))
         Print("Backend: " .. (API and API.kind or "none"))
+        Print("Prices known: " .. tostring(PW:PriceCount()))
         Print("Classic trade skill API: " .. tostring(type(GetNumTradeSkills) == "function"))
         Print("C_TradeSkillUI present: " .. tostring(C_TradeSkillUI ~= nil))
         if C_TradeSkillUI then
@@ -575,6 +649,8 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         print("  /pwb blizz - switch between this window and the default one")
         print("  /pwb cd - list tracked cooldowns for all characters")
         print("  /pwb scale <0.6-2> - change the window size, e.g. /pwb scale 1.3")
+        print("  /pwb price <itemID> <gold> - set an item's price by hand")
+        print("  /pwb prices - list known prices")
         print("  /pwb reset - reset the window position and size")
         print("  /pwb debug - show client and API info")
     end

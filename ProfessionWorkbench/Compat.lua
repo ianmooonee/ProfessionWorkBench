@@ -115,6 +115,11 @@ function Classic.NumMade(index)
     return GetTradeSkillNumMade(index)
 end
 
+-- Item ID of what the recipe makes, for pricing. "item:12345:" -> 12345.
+function Classic.OutputItemID(index)
+    return ItemIDFromLink(GetTradeSkillItemLink and GetTradeSkillItemLink(index))
+end
+
 function Classic.Craft(index, count)
     DoTradeSkill(index, count)
 end
@@ -424,6 +429,15 @@ function Modern.NumMade(id)
     local s = Schematic(id)
     if s then return s.quantityMin, s.quantityMax end
     return S("GetRecipeNumItemsProduced", id)
+end
+
+-- Item ID of what the recipe makes. Read from the schematic first because the
+-- output data call needs a reagent table to take qualities into account.
+function Modern.OutputItemID(id)
+    local s = Schematic(id)
+    if s and s.outputItemID then return s.outputItemID end
+    local out = S("GetRecipeOutputItemData", id)
+    if out then return out.itemID end
 end
 
 function Modern.Craft(id, count)

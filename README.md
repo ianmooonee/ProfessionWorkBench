@@ -55,7 +55,7 @@ Replace the `ProfessionWorkbench` folder with the new one and `/reload`. Your se
 
 ## Usage
 
-Open a profession the normal way (spellbook or action bar). The window is movable by dragging and closes with **Esc** or the **X** button. Use the `-` / `+` buttons next to **X** to make it bigger or smaller. **Default UI** switches to the default Blizzard window; click **Use Workbench** on top of that window to come back. Your choice is remembered.
+Open a profession the normal way (spellbook or action bar). The window is movable by dragging and closes with **Esc** or the **X** button. Use the `-` / `+` buttons next to **X** to make it bigger or smaller. Drag the grip in the bottom-right corner to resize it (more room for the recipe list and details). **Default UI** switches to the default Blizzard window; click **Use Workbench** on top of that window to come back. Your choice is remembered.
 
 | Command | What it does |
 | --- | --- |
@@ -63,7 +63,7 @@ Open a profession the normal way (spellbook or action bar). The window is movabl
 | `/pwb blizz` | Switch between Profession Workbench and the default Blizzard window (same as the **Default UI** / **Use Workbench** buttons) |
 | `/pwb cd` | List tracked cooldowns for all characters |
 | `/pwb scale <0.6-2>` | Change the window size (e.g. `/pwb scale 1.3`); the `-` / `+` buttons in the title bar do the same |
-| `/pwb reset` | Move the window back to the center of the screen |
+| `/pwb reset` | Move the window back to the center of the screen and restore its default size |
 | `/pwb debug` | Print client version and API info (useful for bug reports) |
 
 ## Compatibility

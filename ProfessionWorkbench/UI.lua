@@ -41,6 +41,8 @@ local BODY_TOP = -104
 local FOOTER_H = 26
 local LIST_W = 340
 local ROW_H = 20
+local MAX_W, MAX_H = 1600, 1200
+local MAX_ROWS = 60 -- rows created; how many are used depends on the window height
 local NUM_ROWS = floor(((H + BODY_TOP - FOOTER_H - PAD) - 8) / ROW_H)
 local NUM_REAGENTS = 7
 local NUM_CD_LINES = 3
@@ -139,9 +141,16 @@ end
 -- Build
 ---------------------------------------------------------------------------
 
+local function SavePosition(f)
+    local p, _, rp, x, y = f:GetPoint()
+    PW.db.point = { p, rp, x, y }
+end
+
 function PW:RestorePosition()
     local f = self.frame
     if not f then return end
+    local size = self.db.size
+    f:SetSize(size and size[1] or W, size and size[2] or H)
     f:ClearAllPoints()
     local p = self.db.point
     if p then
@@ -312,7 +321,8 @@ local function BuildToolbar(f)
 
     local best = CreateFrame("Button", nil, f)
     best:SetPoint("TOPLEFT", PAD + LIST_W + PAD + 2, -78)
-    best:SetSize(W - LIST_W - 3 * PAD - 4, 18)
+    best:SetPoint("RIGHT", f, "RIGHT", -PAD - 2, 0)
+    best:SetHeight(18)
     best.text = Text(best, "GameFontHighlightSmall", C.muted)
     best.text:SetPoint("LEFT")
     best.text:SetPoint("RIGHT")
@@ -349,7 +359,13 @@ local function BuildList(f)
     list.empty:SetText("No recipes match your filters.")
 
     f.rows = {}
-    for i = 1, NUM_ROWS do
+    -- Recompute how many rows fit when the window is resized.
+    list:SetScript("OnSizeChanged", function(self, _, height)
+        NUM_ROWS = min(MAX_ROWS, max(1, floor(((height or self:GetHeight()) - 8) / ROW_H)))
+        if PW.frame and PW.frame.scroll then PW:UpdateList() end
+    end)
+
+    for i = 1, MAX_ROWS do
         local row = CreateFrame("Button", nil, list)
         row:SetHeight(ROW_H)
         row:SetPoint("TOPLEFT", 4, -4 - (i - 1) * ROW_H)
@@ -577,6 +593,13 @@ local function BuildDetail(f)
     local enchant = FlatButton(er, "Enchant", 90, 22)
     enchant:SetPoint("RIGHT")
     enchant:SetScript("OnClick", function() PW:DoEnchant() end)
+    if enchant.SetMotionScriptsWhileDisabled then enchant:SetMotionScriptsWhileDisabled(true) end
+    enchant:HookScript("OnEnter", function(self)
+        if self.reason then
+            ShowTooltip(self, function(tt) tt:SetText(self.reason, 1, 0.4, 0.4) end)
+        end
+    end)
+    enchant:HookScript("OnLeave", GameTooltip_Hide)
     er.button = enchant
 
     local slot = CreateFrame("Button", nil, er, BT)
@@ -670,7 +693,30 @@ local function BuildFooter(f)
         x = x + 140
     end
     local help = Text(f, "GameFontHighlightSmall", C.muted)
-    help:SetPoint("BOTTOMRIGHT", -12, 11)
+    help:SetPoint("BOTTOMRIGHT", -26, 11)
+
+    -- Resize grip (bottom-right corner)
+    local grip = CreateFrame("Button", nil, f)
+    grip:SetSize(16, 16)
+    grip:SetPoint("BOTTOMRIGHT", -2, 2)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetScript("OnMouseDown", function(_, button)
+        if button == "LeftButton" then f:StartSizing("BOTTOMRIGHT") end
+    end)
+    grip:SetScript("OnMouseUp", function()
+        f:StopMovingOrSizing()
+        PW.db.size = { floor(f:GetWidth() + 0.5), floor(f:GetHeight() + 0.5) }
+        SavePosition(f)
+    end)
+    grip:SetScript("OnEnter", function(self)
+        ShowTooltip(self, function(tt)
+            tt:SetText("Drag to resize")
+            tt:AddLine("/pwb reset restores the default size", 0.7, 0.7, 0.7)
+        end)
+    end)
+    grip:SetScript("OnLeave", GameTooltip_Hide)
     help:SetJustifyH("RIGHT")
     help:SetText("/pwb for options")
 end
@@ -680,6 +726,13 @@ function PW:BuildUI()
 
     local f = CreateFrame("Frame", "ProfessionWorkbenchFrame", UIParent, BT)
     f:SetSize(W, H)
+    f:SetResizable(true)
+    if f.SetResizeBounds then
+        f:SetResizeBounds(W, H, MAX_W, MAX_H)
+    else
+        if f.SetMinResize then f:SetMinResize(W, H) end
+        if f.SetMaxResize then f:SetMaxResize(MAX_W, MAX_H) end
+    end
     f:SetFrameStrata("HIGH")
     f:SetToplevel(true)
     f:SetClampedToScreen(true)
@@ -689,8 +742,7 @@ function PW:BuildUI()
     f:SetScript("OnDragStart", f.StartMoving)
     f:SetScript("OnDragStop", function(frame)
         frame:StopMovingOrSizing()
-        local p, _, rp, x, y = frame:GetPoint()
-        PW.db.point = { p, rp, x, y }
+        SavePosition(frame)
     end)
     SetBD(f, C.bg)
     f:Hide()
@@ -832,7 +884,7 @@ function PW:UpdateList()
 
     local now = GetTime()
     for i, row in ipairs(f.rows) do
-        local item = self.display[self.offset + i]
+        local item = i <= NUM_ROWS and self.display[self.offset + i] or nil
         row.item = item
         row.isSelected = false
         if not item then
@@ -1050,7 +1102,10 @@ end
 function PW:DoEnchant()
     local r = self.selected and self.byIndex[self.selected]
     if r and TargetExists(self.enchantTarget) then
-        self.API.CraftEnchant(r.index, self.enchantTarget)
+        local ok, err = pcall(self.API.CraftEnchant, r.index, self.enchantTarget)
+        if not ok then
+            PW.Print("Enchanting failed: " .. tostring(err) .. " - type /pwb debug and share both messages.")
+        end
     end
 end
 
@@ -1076,7 +1131,18 @@ function PW:UpdateEnchantRow()
     end
 
     local onCooldown = r and r.cooldownEnds and r.cooldownEnds > GetTime()
-    SetButtonEnabled(er.button, link ~= nil and r ~= nil and r.numAvailable > 0 and not onCooldown)
+    local reason
+    if not r then
+        reason = "Select an enchant."
+    elseif not link then
+        reason = "Choose an item to enchant first."
+    elseif onCooldown then
+        reason = "This enchant is on cooldown."
+    elseif r.numAvailable <= 0 and self:CraftableFromBags(r.index) <= 0 then
+        reason = "Missing reagents in your bags."
+    end
+    er.button.reason = reason
+    SetButtonEnabled(er.button, reason == nil)
 end
 
 local function BuildEnchantMenu(f)

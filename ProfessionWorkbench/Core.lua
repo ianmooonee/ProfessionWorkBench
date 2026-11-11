@@ -144,6 +144,17 @@ function PW:GetReagents(index)
     return list
 end
 
+-- How many crafts the reagents in bags allow (the API's numAvailable can be
+-- 0 for some recipes, e.g. enchants, even with every reagent in the bags).
+function PW:CraftableFromBags(index)
+    local n
+    for _, rg in ipairs(self:GetReagents(index)) do
+        local can = floor(rg.bags / max(rg.need, 1))
+        n = n and math.min(n, can) or can
+    end
+    return n or 0
+end
+
 function PW:CraftableWithBank(index)
     local n
     for _, rg in ipairs(self:GetReagents(index)) do
@@ -440,8 +451,9 @@ SlashCmdList.PROFWORKBENCH = function(msg)
 
     elseif msg == "reset" then
         PW.db.point = nil
+        PW.db.size = nil
         if PW.RestorePosition then PW:RestorePosition() end
-        Print("Window position reset.")
+        Print("Window position and size reset.")
 
     elseif msg == "cd" or msg == "cooldowns" then
         local list = PW:AllCooldowns()
@@ -480,7 +492,7 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         print("  /pwb blizz - switch between this window and the default one")
         print("  /pwb cd - list tracked cooldowns for all characters")
         print("  /pwb scale <0.6-2> - change the window size, e.g. /pwb scale 1.3")
-        print("  /pwb reset - reset the window position")
+        print("  /pwb reset - reset the window position and size")
         print("  /pwb debug - show client and API info")
     end
 end

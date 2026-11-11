@@ -206,7 +206,13 @@ local function BuildAHButton(parent)
     -- Beside the search box at the top, clear of the tab strip.
     b:SetPoint("TOPLEFT", parent, "TOPLEFT", 14, -34)
     b:SetText("Scan prices")
-    b:SetScript("OnClick", function()
+    b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    b:SetScript("OnClick", function(_, button)
+        if button == "RightButton" then
+            -- Price just the listing under the cursor.
+            PW:ScanHovered()
+            return
+        end
         if PW:IsScanning() then
             PW:StopScan(false)
         else
@@ -217,8 +223,9 @@ local function BuildAHButton(parent)
     b:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText("Profession Workbench: scan prices")
-        GameTooltip:AddLine("Reads the auction house listing and records what your known recipes' reagents and products are worth, plus the disenchant materials.", 1, 1, 1, true)
-        GameTooltip:AddLine("One browse query with every page, so it is quick and stays well inside the auction house limits.", 0.7, 0.7, 0.7, true)
+        GameTooltip:AddLine("Records what your known recipes' reagents and products are worth, plus the disenchant materials.", 1, 1, 1, true)
+        GameTooltip:AddLine("One browse query with every page, so it is quick.", 0.7, 0.7, 0.7, true)
+        GameTooltip:AddLine("Right-click: price just the listing under your cursor.", 0.7, 0.7, 0.7, true)
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", GameTooltip_Hide)

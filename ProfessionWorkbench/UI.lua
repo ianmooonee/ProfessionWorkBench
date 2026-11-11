@@ -123,18 +123,6 @@ local function Toggle(parent, label, key, width)
     return b
 end
 
-function PW:UpdateScanButton()
-    local f = self.frame
-    if not f or not f.scanBtn then return end
-    local done, total = self:ScanProgress()
-    if done then
-        f.scanBtn.label:SetText(format("Stop %d/%d", done, total))
-    else
-        f.scanBtn.label:SetText("Scan prices")
-    end
-    f.scanBtn:SetShown(self.API ~= nil)
-end
-
 function PW:ProfitColor(profit)
     if profit == nil then return C.muted end
     if profit > 0 then return { 0.4, 0.9, 0.45 } end
@@ -367,28 +355,6 @@ local function BuildToolbar(f)
     f.useBank:SetScript("OnLeave", GameTooltip_Hide)
 
     -- Skill-up guide (right of the toolbar)
-    -- A single button that adapts to where you are: at the auction house it
-    -- starts a scan and reports progress; elsewhere it just says how to price.
-    local scanBtn = FlatButton(f, "Scan prices", 90, 18)
-    scanBtn:SetPoint("TOPLEFT", PAD, -92)
-    scanBtn:SetScript("OnClick", function()
-        if PW:IsScanning() then
-            PW:StopScan(false)
-        else
-            PW:StartScan()
-        end
-        PW:UpdateScanButton()
-    end)
-    scanBtn:SetScript("OnEnter", function(self)
-        ShowTooltip(self, function(tt)
-            tt:AddLine("Auction house scan")
-            tt:AddLine("Open the auction house and click this to price every reagent and product of your known recipes, plus the disenchant materials.", 1, 1, 1, true)
-            tt:AddLine("It paces itself to the auction house's 100 queries per minute, so it takes a couple of minutes.", 0.7, 0.7, 0.7, true)
-            tt:AddLine("Prices over two days old are shown as stale.", 0.7, 0.7, 0.7, true)
-        end)
-    end)
-    scanBtn:SetScript("OnLeave", GameTooltip_Hide)
-    f.scanBtn = scanBtn
 
     f.summary = Text(f, "GameFontHighlightSmall")
     f.summary:SetPoint("TOPLEFT", PAD + LIST_W + PAD + 2, -56)
@@ -1030,7 +996,6 @@ function PW:BuildUI()
     BuildFooter(f)
     f.scaleText:SetText(format("%d%%", (self.db.scale or 1) * 100 + 0.5))
     self:UpdateFilterWidgets()
-    self:UpdateScanButton()
     return f
 end
 

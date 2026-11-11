@@ -5,7 +5,7 @@ local PW = {}
 ns.PW = PW
 _G.ProfessionWorkbench = PW -- handy for /dump while debugging
 
-PW.version = "0.6.2"
+PW.version = "0.7.0"
 
 local floor, max, format = math.floor, math.max, string.format
 
@@ -166,8 +166,10 @@ function PW:Scan()
         r.numAvailable = n or 0
         r.profit = select(1, self:Profit(r.index))
     end
-    -- Rebuild the reagent -> recipe map so the queue can find intermediates.
+    -- Rebuild the reagent -> recipe map so the queue can find intermediates,
+    -- and drop the tooltip caches, which depend on recipes and profits.
     self:BuildOutputIndex()
+    if self.InvalidateItemIndexes then self:InvalidateItemIndexes() end
     return recipes, byIndex
 end
 
@@ -438,6 +440,8 @@ function PW:ADDON_LOADED(name)
     if name == ADDON then
         self:InitDB()
         self:HookBlizzard()
+        -- Tooltips work everywhere, not just while a profession is open.
+        self:InstallTooltipHook()
     else
         for _, addon in pairs(ns.BLIZZARD_FRAMES) do
             if name == addon then self:HookBlizzard() end
@@ -615,24 +619,6 @@ SlashCmdList.PROFWORKBENCH = function(msg)
             end
         end
 
-    elseif msg == "prices" then
-        local prices, list = PW:Prices(), {}
-        for id in pairs(prices) do list[#list + 1] = id end
-        table.sort(list)
-        if #list == 0 then
-            Print("No prices stored yet.")
-            print("  Visit a merchant to learn vendor prices, or set one with /pwb price <itemID> <gold>.")
-        else
-            Print(format("%d prices stored:", #list))
-            for _, id in ipairs(list) do
-                local p = prices[id]
-                local name = C_Item and C_Item.GetItemInfo and select(1, C_Item.GetItemInfo(id))
-                print(format("  %s - %s each (%s, %s)%s",
-                    name or ("item " .. id), PW.Money(p.unit), p.source or "?",
-                    PW.Age(p.at and (time() - p.at)), PW:IsStale(id) and " |cffff5959stale|r" or ""))
-            end
-        end
-
     elseif msg:match("^queue%f[%A]") or msg == "queue" then
         local arg = msg:match("^queue%s+(.+)$")
         local r = self.selected and self.byIndex[self.selected]
@@ -729,23 +715,6 @@ SlashCmdList.PROFWORKBENCH = function(msg)
     elseif msg:match("^ahstop") then
         if PW:IsScanning() then PW:StopScan(false) else Print("No scan is running.") end
 
-    elseif msg:match("^ahstatus") then
-        local done, total, failed = PW:ScanProgress()
-        if not done then
-            Print("No scan is running.")
-        else
-            Print(format("Scanning: %d of %d items (%d skipped). /pwb ahstop to cancel.", done, total, failed or 0))
-        end
-
-    elseif msg:match("^ahitem") then
-        PW:ScanHovered()
-
-    elseif msg == "ahhelp" then
-        Print("Auction house:")
-        print("  /pwb ahscan - price your recipes' reagents, products and disenchant materials")
-        print("  /pwb ahitem - price just the item you are hovering")
-        print("  /pwb ahstatus, /pwb ahstop")
-
     elseif msg == "reset" then
         PW.db.point = nil
         PW.db.size = nil
@@ -788,19 +757,14 @@ SlashCmdList.PROFWORKBENCH = function(msg)
     else
         Print("commands:")
         print("  /pwb blizz - switch between this window and the default one")
-        print("  /pwb cd - list tracked cooldowns for all characters")
         print("  /pwb scale <0.6-2> - change the window size, e.g. /pwb scale 1.3")
-        print("  /pwb price <itemID> <gold> - set an item's price by hand")
-        print("  /pwb scanitem <gold> - record the hovered item's price by hand")
-        print("  /pwb de [item] - compare vendor, auction and disenchant value")
-        print("  /pwb ahscan - at the auction house, price your reagents and products")
-        print("  /pwb ahstop - stop a running auction house scan")
-        print("  /pwb ahitem - price just the item you are hovering")
-        print("  /pwb prices - list known prices")
-        print("  /pwb queue [<count>] [<recipe>] - add to the craft queue")
-        print("  /pwb list - shopping list for the queue")
-        print("  /pwb queueclear - empty the craft queue")
         print("  /pwb reset - reset the window position and size")
+        print("  /pwb cd - list tracked cooldowns for all characters")
+        print("  /pwb queue [<count>] [<recipe>] - add to the craft queue")
+        print("  /pwb queueclear - empty the craft queue")
+        print("  /pwb price <itemID> <gold> - set an item's price by hand")
         print("  /pwb debug - show client and API info")
+        print(" ")
+        print("Prices also appear on item tooltips; hold Alt on one for the recipes that use it.")
     end
 end

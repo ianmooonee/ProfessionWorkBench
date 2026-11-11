@@ -4,7 +4,7 @@ A cleaner, flat dark replacement for the profession window in **World of Warcraf
 
 Open any profession as usual and Profession Workbench appears instead of the default window, with a searchable recipe list, skill-up colors at a glance, reagent counts that include your bank, and crafting cooldowns tracked across all your characters.
 
-> **Status:** early version (0.6.2), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
+> **Status:** early version (0.7.0), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
 
 ## Features
 
@@ -31,7 +31,8 @@ Open any profession as usual and Profession Workbench appears instead of the def
 **Cost and profit**
 - The details panel shows what one craft costs in reagents, what the result sells for after the 5% auction house cut, and the profit. Recipes missing a price say so rather than showing a fake number.
 - **Sort by profit** ranks the whole list by what one craft earns instead of grouping by category. Recipes with no price go last.
-- **Scan prices** — a button on the auction house window itself, and on the profession window's top left — prices every reagent and product of your known recipes, plus the disenchant materials, while the auction house is open. It sends a single browse query and reads every page, so it runs in seconds rather than minutes; the button shows how many of your items it has priced and stops it. `/pwb ahstop` also stops it, and `/pwb ahitem` prices just the item you are hovering.
+- **Prices on item tooltips.** Hover any reagent, product or disenchant material and its vendor price, auction price (with age when it is over two days old) and disenchant value appear at the bottom. Hold **Alt** on any item to also see which of your recipes use it and what they earn.
+- **Scan prices**, a button on the auction house window — prices every reagent and product of your known recipes, plus the disenchant materials, while the auction house is open. It sends a single browse query and reads every page, so it runs in seconds rather than minutes; the button shows how many of your items it has priced and stops it. `/pwb ahstop` also stops it, and `/pwb ahitem` prices just the item you are hovering.
 - Merchant visits fill in vendor prices automatically, and `/pwb price` or `/pwb scanitem` record anything you want by hand.
 - A manual price is never overwritten by learning, so it always wins.
 - Prices are saved per account, so the numbers work on any character and away from the auction house.
@@ -44,7 +45,7 @@ Open any profession as usual and Profession Workbench appears instead of the def
 
 **Disenchant or sell**
 - For a craft whose result is a green, blue or purple weapon or armor piece, the details panel also shows what its materials are worth, and whether disenchanting beats selling. Profit is then measured against whichever pays more.
-- `/pwb de` compares the three ways to get rid of an item: what a vendor pays, the auction house price after the 5% cut, and the average value of its disenchant materials. With no argument it uses the item you are hovering; `/pwb de <itemID>` or `/pwb de <item name>` also work.
+- The item tooltip shows all three for anything you hover, and the details panel shows them for each recipe's result. `/pwb de [item]` prints the comparison to chat when that is easier to read.
 - Disenchant values are averages from the WoW Forever disenchanting guide, resolved by item level. A single disenchant can come out better or worse, and an item whose materials have no price yet shows a `+` instead of a number.
 
 **Cooldowns**
@@ -83,17 +84,11 @@ Open a profession the normal way (spellbook or action bar). The window is movabl
 | `/pwb cd` | List tracked cooldowns for all characters |
 | `/pwb scale <0.6-2>` | Change the window size (e.g. `/pwb scale 1.3`); the `-` / `+` buttons in the title bar do the same |
 | `/pwb price <itemID> <gold>` | Set an item's price by hand, e.g. `/pwb price 2592 1.5` for Wool Cloth at 1g 50s |
-| `/pwb prices` | List every stored price with its source and age |
 | `/pwb price clear <itemID>` | Forget a manually set price |
 | `/pwb scanitem <gold>` | Record the price of the item you are hovering (an auction listing or a bag item), e.g. `/pwb scanitem 1.5` |
 | `/pwb queue [<count>] [<recipe>]` | Add to the craft queue; with no arguments it queues the selected recipe once |
-| `/pwb list` | Show the shopping list for the queue |
-| `/pwb de [item]` | Compare vendor, auction and disenchant value for an item (hover it, or give an item ID or name) |
-| `/pwb ahscan` | At the auction house, price your recipes' reagents and products |
-| `/pwb ahitem` | Price just the item you are hovering |
+| `/pwb ahscan` | At the auction house, price your recipes' reagents and products (the button is easier) |
 | `/pwb ahstop` | Stop a running scan |
-| `/pwb ahstatus` | Show scan progress |
-| `/pwb queueclear` | Empty the craft queue |
 | `/pwb reset` | Move the window back to the center of the screen and restore its default size |
 | `/pwb debug` | Print client version and API info (useful for bug reports) |
 

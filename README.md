@@ -4,7 +4,7 @@ A cleaner, flat dark replacement for the profession window in **World of Warcraf
 
 Open any profession as usual and Profession Workbench appears instead of the default window, with a searchable recipe list, skill-up colors at a glance, reagent counts that include your bank, and crafting cooldowns tracked across all your characters.
 
-> **Status:** early version (0.2.0), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
+> **Status:** early version (0.3.0), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
 
 ## Features
 
@@ -67,8 +67,8 @@ Open a profession the normal way (spellbook or action bar). The window is movabl
 ## Compatibility
 
 - Built for WoW Forever, client 1.60.1 (`## Interface: 16001`).
-- Uses the classic-style trade skill API. If WoW Forever's client turns out to differ, the addon leaves the default window alone and prints a message asking you to run `/pwb debug`.
-- **Enchanting** may still open the default window, because classic-era clients use a separate window for it. Support is planned.
+- Supports both the classic-style trade skill API and the newer `C_TradeSkillUI` API (which WoW Forever uses). If neither is available, the addon leaves the default window alone and prints a message asking you to run `/pwb debug`.
+- Linked and guild profession windows are left to the default UI.
 
 ## Troubleshooting
 

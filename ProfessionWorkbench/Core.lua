@@ -5,7 +5,7 @@ local PW = {}
 ns.PW = PW
 _G.ProfessionWorkbench = PW -- handy for /dump while debugging
 
-PW.version = "0.2.0"
+PW.version = "0.3.0"
 
 local floor, max, format = math.floor, math.max, string.format
 
@@ -20,11 +20,9 @@ local function Try(fn, ...)
     end
 end
 
--- The addon is written against the classic-style trade skill API
--- (GetNumTradeSkills / GetTradeSkillInfo / DoTradeSkill ...).
-PW.hasLegacyAPI = type(GetNumTradeSkills) == "function"
-    and type(GetTradeSkillInfo) == "function"
-    and type(GetTradeSkillReagentInfo) == "function"
+-- Profession API backend (classic or C_TradeSkillUI), chosen in Compat.lua.
+local API = ns.API
+PW.API = API
 
 ---------------------------------------------------------------------------
 -- Saved variables
@@ -128,61 +126,19 @@ end
 -- Profession data
 ---------------------------------------------------------------------------
 
--- Returns a flat list of recipes (headers are stored on each recipe).
+-- Returns a flat list of recipes (headers are stored on each recipe)
+-- and a lookup by recipe key.
 function PW:Scan()
-    local recipes, byIndex = {}, {}
-    local header
-    local now = GetTime()
-    local collapsedFound = false
-
-    for i = 1, (GetNumTradeSkills() or 0) do
-        local name, skillType, numAvailable, isExpanded = GetTradeSkillInfo(i)
-        if name then
-            if skillType == "header" or skillType == "subheader" then
-                header = name
-                if isExpanded == false then collapsedFound = true end
-            else
-                local r = {
-                    index = i,
-                    name = name,
-                    difficulty = skillType,
-                    numAvailable = numAvailable or 0,
-                    header = header,
-                    icon = GetTradeSkillIcon and GetTradeSkillIcon(i),
-                }
-                local cd = GetTradeSkillCooldown and GetTradeSkillCooldown(i)
-                if cd and cd > 0 then
-                    r.cooldownEnds = now + cd
-                    r.cooldown = cd
-                end
-                recipes[#recipes + 1] = r
-                byIndex[i] = r
-            end
-        end
-    end
-
-    -- Make sure every category is expanded so we see every recipe.
-    if collapsedFound and (self.expandTries or 0) < 3 then
-        self.expandTries = (self.expandTries or 0) + 1
-        Try(ExpandTradeSkillSubClass, 0)
-    end
-
+    local recipes = API.Scan()
+    local byIndex = {}
+    for _, r in ipairs(recipes) do byIndex[r.index] = r end
     return recipes, byIndex
 end
 
 function PW:GetReagents(index)
-    local list = {}
-    for j = 1, (GetTradeSkillNumReagents(index) or 0) do
-        local name, texture, need, bags = GetTradeSkillReagentInfo(index, j)
-        local link = GetTradeSkillReagentItemLink and GetTradeSkillReagentItemLink(index, j)
-        list[j] = {
-            name = name,
-            icon = texture,
-            need = need or 1,
-            bags = bags or 0,
-            bank = self:BankCount(PW.ItemIDFromLink(link)),
-            link = link,
-        }
+    local list = API.GetReagents(index)
+    for _, rg in ipairs(list) do
+        rg.bank = self:BankCount(rg.itemID or PW.ItemIDFromLink(rg.link))
     end
     return list
 end
@@ -233,42 +189,43 @@ end
 ---------------------------------------------------------------------------
 
 function PW:ShouldReplace()
-    return self.db and not self.db.useBlizzard and self.hasLegacyAPI
+    return self.db and not self.db.useBlizzard and API ~= nil and API.CanReplace()
 end
 
--- Hide Blizzard's TradeSkillFrame without ending the trade skill session
--- (its OnHide handler would call CloseTradeSkill()).
+-- Hide Blizzard's profession window without ending the trade skill session
+-- (its OnHide handler would close the trade skill).
 function PW.SuppressBlizzard()
-    local f = TradeSkillFrame
-    if not f or not f:IsShown() or not PW:ShouldReplace() then return end
-    local onHide = f:GetScript("OnHide")
-    f:SetScript("OnHide", nil)
-    HideUIPanel(f)
-    if f:IsShown() then f:Hide() end
-    f:SetScript("OnHide", onHide)
+    if not PW:ShouldReplace() then return end
+    for name in pairs(ns.BLIZZARD_FRAMES) do
+        local f = _G[name]
+        if f and f:IsShown() then
+            local onHide = f:GetScript("OnHide")
+            f:SetScript("OnHide", nil)
+            HideUIPanel(f)
+            if f:IsShown() then f:Hide() end
+            f:SetScript("OnHide", onHide)
+        end
+    end
 end
 
 function PW:HookBlizzard()
-    if self.hooked or not TradeSkillFrame then return end
-    self.hooked = true
-    TradeSkillFrame:HookScript("OnShow", function()
-        if PW:ShouldReplace() then C_Timer.After(0, PW.SuppressBlizzard) end
-    end)
-end
-
-local function ResetBlizzardFilters()
-    Try(TradeSkillOnlyShowMakeable, false)
-    Try(SetTradeSkillSubClassFilter, 0, 1, 1)
-    Try(SetTradeSkillInvSlotFilter, 0, 1, 1)
-    Try(SetTradeSkillItemNameFilter, "")
-    Try(ExpandTradeSkillSubClass, 0)
+    self.hooked = self.hooked or {}
+    for name in pairs(ns.BLIZZARD_FRAMES) do
+        local f = _G[name]
+        if f and not self.hooked[name] then
+            self.hooked[name] = true
+            f:HookScript("OnShow", function()
+                if PW:ShouldReplace() then C_Timer.After(0, PW.SuppressBlizzard) end
+            end)
+        end
+    end
 end
 
 -- Called from the UI when our window is hidden (close button, Esc, ...).
 function PW:OnWindowHidden()
     GameTooltip:Hide()
-    if not self.closingFromGame then
-        Try(CloseTradeSkill)
+    if not self.closingFromGame and API then
+        API.Close()
     end
 end
 
@@ -297,6 +254,7 @@ end)
 for _, e in ipairs({
     "ADDON_LOADED", "PLAYER_LOGIN",
     "TRADE_SKILL_SHOW", "TRADE_SKILL_UPDATE", "TRADE_SKILL_CLOSE",
+    "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_DATA_SOURCE_CHANGED", "NEW_RECIPE_LEARNED",
     "BAG_UPDATE_DELAYED", "BANKFRAME_OPENED", "BANKFRAME_CLOSED",
     "PLAYERBANKSLOTS_CHANGED", "GET_ITEM_INFO_RECEIVED",
 }) do
@@ -306,9 +264,11 @@ end
 function PW:ADDON_LOADED(name)
     if name == ADDON then
         self:InitDB()
-        if TradeSkillFrame then self:HookBlizzard() end
-    elseif name == "Blizzard_TradeSkillUI" then
         self:HookBlizzard()
+    else
+        for _, addon in pairs(ns.BLIZZARD_FRAMES) do
+            if name == addon then self:HookBlizzard() end
+        end
     end
 end
 
@@ -326,7 +286,7 @@ function PW:PLAYER_LOGIN()
 end
 
 function PW:TRADE_SKILL_SHOW()
-    if not self.hasLegacyAPI then
+    if not API then
         if not self.warnedAPI then
             self.warnedAPI = true
             Print("This client uses a profession API the addon doesn't support yet. Type /pwb debug and share the output.")
@@ -339,8 +299,7 @@ function PW:TRADE_SKILL_SHOW()
     self.SuppressBlizzard()
     C_Timer.After(0, PW.SuppressBlizzard)
 
-    self.expandTries = 0
-    ResetBlizzardFilters()
+    API.Prepare()
 
     self:BuildUI()
     self.frame:Show()
@@ -350,6 +309,9 @@ end
 function PW:TRADE_SKILL_UPDATE()
     self:RequestRefresh()
 end
+PW.TRADE_SKILL_LIST_UPDATE = PW.TRADE_SKILL_UPDATE
+PW.TRADE_SKILL_DATA_SOURCE_CHANGED = PW.TRADE_SKILL_UPDATE
+PW.NEW_RECIPE_LEARNED = PW.TRADE_SKILL_UPDATE
 
 function PW:TRADE_SKILL_CLOSE()
     if self.frame and self.frame:IsShown() then
@@ -415,8 +377,23 @@ SlashCmdList.PROFWORKBENCH = function(msg)
     elseif msg == "debug" then
         local version, build, _, toc = GetBuildInfo()
         Print(format("v%s, client %s (%s), interface %s", PW.version, tostring(version), tostring(build), tostring(toc)))
-        Print("Classic trade skill API: " .. tostring(PW.hasLegacyAPI))
+        Print("Backend: " .. (API and API.kind or "none"))
+        Print("Classic trade skill API: " .. tostring(type(GetNumTradeSkills) == "function"))
         Print("C_TradeSkillUI present: " .. tostring(C_TradeSkillUI ~= nil))
+        if C_TradeSkillUI then
+            local have, missing = {}, {}
+            for _, fn in ipairs(ns.MODERN_FUNCS) do
+                local t = type(C_TradeSkillUI[fn]) == "function" and have or missing
+                t[#t + 1] = fn
+            end
+            Print("  has: " .. (#have > 0 and table.concat(have, ", ") or "-"))
+            Print("  missing: " .. (#missing > 0 and table.concat(missing, ", ") or "-"))
+        end
+        local frames = {}
+        for name in pairs(ns.BLIZZARD_FRAMES) do
+            if _G[name] then frames[#frames + 1] = name end
+        end
+        Print("Blizzard frames loaded: " .. (#frames > 0 and table.concat(frames, ", ") or "none"))
         Print("Craft API (old Enchanting window): " .. tostring(type(GetNumCrafts) == "function"))
         Print("C_Container present: " .. tostring(C_Container ~= nil))
 

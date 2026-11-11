@@ -323,7 +323,7 @@ local function BuildList(f)
             if not item then return end
             if not self.isSelected then self.bg:SetVertexColor(unpack(C.hover)) end
             if item.kind == "recipe" then
-                ShowTooltip(self, function(tt) tt:SetTradeSkillItem(item.r.index) end)
+                ShowTooltip(self, function(tt) PW.API.SetResultTooltip(tt, item.r.index) end)
             end
         end)
         row:SetScript("OnLeave", function(self)
@@ -383,13 +383,13 @@ local function BuildDetail(f)
     icon.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     icon:SetScript("OnEnter", function(self)
         if PW.selected then
-            ShowTooltip(self, function(tt) tt:SetTradeSkillItem(PW.selected) end)
+            ShowTooltip(self, function(tt) PW.API.SetResultTooltip(tt, PW.selected) end)
         end
     end)
     icon:SetScript("OnLeave", GameTooltip_Hide)
     icon:SetScript("OnClick", function()
         if PW.selected and IsModifiedClick("CHATLINK") then
-            InsertLink(GetTradeSkillItemLink(PW.selected))
+            InsertLink(PW.API.ItemLink(PW.selected))
         end
     end)
     c.icon = icon
@@ -447,7 +447,7 @@ local function BuildDetail(f)
         r.count:SetJustifyH("RIGHT")
         r:SetScript("OnEnter", function(self)
             if self.recipeIndex then
-                ShowTooltip(self, function(tt) tt:SetTradeSkillItem(self.recipeIndex, self.reagentIndex) end)
+                ShowTooltip(self, function(tt) PW.API.SetReagentTooltip(tt, self.recipeIndex, self.reagentIndex, self.reagent) end)
             end
         end)
         r:SetScript("OnLeave", GameTooltip_Hide)
@@ -493,14 +493,14 @@ local function BuildDetail(f)
     create:SetPoint("LEFT", plus, "RIGHT", 12, 0)
     create:SetScript("OnClick", function()
         qty:ClearFocus()
-        if PW.selected then DoTradeSkill(PW.selected, tonumber(qty:GetText()) or 1) end
+        if PW.selected then PW.API.Craft(PW.selected, tonumber(qty:GetText()) or 1) end
     end)
 
     local createAll = FlatButton(c, "Create all", 90, 22)
     createAll:SetPoint("LEFT", create, "RIGHT", 6, 0)
     createAll:SetScript("OnClick", function()
         local r = PW.selected and PW.byIndex[PW.selected]
-        if r and r.numAvailable > 0 then DoTradeSkill(r.index, r.numAvailable) end
+        if r and r.numAvailable > 0 then PW.API.Craft(r.index, r.numAvailable) end
     end)
 
     c.qty, c.create, c.createAll = qty, create, createAll
@@ -773,7 +773,7 @@ function PW:OnRowClick(row)
     end
     if IsModifiedClick("CHATLINK") then
         local idx = item.r.index
-        InsertLink((GetTradeSkillRecipeLink and GetTradeSkillRecipeLink(idx)) or GetTradeSkillItemLink(idx))
+        InsertLink(PW.API.RecipeLink(idx))
         return
     end
     self:Select(item.r.index)
@@ -781,7 +781,7 @@ end
 
 function PW:Select(index, scrollTo)
     self.selected = index
-    if SelectTradeSkill then pcall(SelectTradeSkill, index) end
+    PW.API.Select(index)
     if scrollTo then
         for i, item in ipairs(self.display) do
             if item.kind == "recipe" and item.r.index == index then
@@ -826,7 +826,7 @@ function PW:UpdateDetail()
     c.diff:SetTextColor(unpack(dd.color))
 
     local meta = r.header or ""
-    local lo, hi = GetTradeSkillNumMade(r.index)
+    local lo, hi = PW.API.NumMade(r.index)
     local made
     if lo and hi and hi > lo then
         made = format("Makes %d-%d", lo, hi)
@@ -843,7 +843,7 @@ function PW:UpdateDetail()
         local rg = reagents[j]
         if rg then
             row:Show()
-            row.recipeIndex, row.reagentIndex, row.link = r.index, j, rg.link
+            row.recipeIndex, row.reagentIndex, row.link, row.reagent = r.index, j, rg.link, rg
             row.icon:SetTexture(rg.icon)
             row.name:SetText(rg.name or "Loading...")
             local color
@@ -858,7 +858,7 @@ function PW:UpdateDetail()
             row.bank:SetText((useBank and rg.bank > 0) and format("+%d in bank", rg.bank) or "")
         else
             row:Hide()
-            row.recipeIndex, row.link = nil, nil
+            row.recipeIndex, row.link, row.reagent = nil, nil, nil
         end
     end
     local extra = #reagents - NUM_REAGENTS
@@ -900,7 +900,7 @@ function PW:UpdateSummary()
         f.best.text:SetText(format("Best skill-up you can craft now:  |cff%s%s|r (%d)", hex, best.name, best.numAvailable))
         f.best.index = best.index
     else
-        local _, rank, maxRank = GetTradeSkillLine()
+        local _, rank, maxRank = PW.API.GetLine()
         if rank and maxRank and maxRank > 0 and rank >= maxRank then
             f.best.text:SetText("Skill is at the cap for your current rank. Train the next rank to keep leveling.")
         else
@@ -935,7 +935,7 @@ function PW:Refresh()
     local f = self.frame
     if not f or not f:IsShown() then return end
 
-    local name, rank, maxRank = GetTradeSkillLine()
+    local name, rank, maxRank = PW.API.GetLine()
     if name ~= self.profession then
         -- Switched profession: start fresh.
         self.profession = name

@@ -160,8 +160,10 @@ function PW.Money(copper, short)
         out = format("%d%s %02d%s", g, COPPER_ICON, s, SILVER_ICON)
         if not short and c > 0 then out = out .. format(" %02d%s", c, COPPER_ONLY) end
     elseif s > 0 then
+        -- Below a gold, copper is one of the two useful parts, so keep it
+        -- even in short form (2s 94c, not 2s).
         out = format("%d%s", s, SILVER_ICON)
-        if not short and c > 0 then out = out .. format(" %02d%s", c, COPPER_ONLY) end
+        if c > 0 then out = out .. format(" %02d%s", c, COPPER_ONLY) end
     else
         out = format("%d%s", c, COPPER_ONLY)
     end

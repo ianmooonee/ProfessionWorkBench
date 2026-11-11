@@ -1,11 +1,12 @@
 ## Interface: 16001
 ## Title: Profession Workbench
 ## Notes: A cleaner, searchable profession window with reagent counts (bags and bank), cooldown tracking and skill-up colors.
-## Version: 0.4.0
+## Version: 0.5.0
 ## SavedVariables: ProfessionWorkbenchDB
 
 Compat.lua
 Core.lua
 Prices.lua
 Queue.lua
+Disenchant.lua
 UI.lua

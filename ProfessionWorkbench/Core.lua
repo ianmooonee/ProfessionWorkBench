@@ -5,7 +5,7 @@ local PW = {}
 ns.PW = PW
 _G.ProfessionWorkbench = PW -- handy for /dump while debugging
 
-PW.version = "0.4.0"
+PW.version = "0.5.0"
 
 local floor, max, format = math.floor, math.max, string.format
 
@@ -531,6 +531,28 @@ function PW:MERCHANT_UPDATE()
     self:ScanMerchant()
 end
 
+function PW:PrintDisposition(itemID)
+    local f = self:ItemFacts(itemID)
+    if not f then
+        Print("Item " .. tostring(itemID) .. " isn't cached yet. Hover it once and try again.")
+        return
+    end
+    Print(format("%s (item level %d)", f.name, f.itemLevel or 0))
+    local d = self:Disposition(itemID)
+    if not d then return end
+    if d.vendor then print("  vendor pays:     " .. PW.Money(d.vendor)) end
+    if d.auction then print("  auction (after cut): " .. PW.Money(d.auction)) end
+    if d.disenchant then
+        local lootText = self:LootText(itemID)
+        print(format("  disenchant:      %s%s", PW.Money(d.disenchant), lootText and ("  (" .. lootText .. ")") or ""))
+    else
+        print("  disenchant:      not possible, or its materials have no price")
+    end
+    local label = ({ vendor = "sell to a vendor", auction = "auction house",
+                     disenchant = "disenchant" })[d.best]
+    if label then print("  best: " .. label) end
+end
+
 ---------------------------------------------------------------------------
 -- Slash command
 ---------------------------------------------------------------------------
@@ -665,6 +687,39 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         Print(text)
         if ok and PW.frame and PW.frame:IsShown() then PW:Refresh() end
 
+    elseif msg:match("^de") then
+        local arg = msg:match("^de%s+(.+)$")
+        if not arg then
+            -- No argument: use the hovered item, else the selected recipe's output.
+            local hovered = self:HoveredItem()
+            local itemID = hovered
+            if not itemID and self.selected and self.byIndex[self.selected] then
+                itemID = self.API.OutputItemID and self.API.OutputItemID(self.selected)
+            end
+            if not itemID then
+                Print("Usage: /pwb de <itemID or item name>  - or hover an item and type /pwb de")
+            else
+                self:PrintDisposition(itemID)
+            end
+        elseif tonumber(arg) then
+            self:PrintDisposition(tonumber(arg))
+        else
+            -- Look the name up among the recipes we can see.
+            local found
+            local needle = arg:lower()
+            for _, r in ipairs(self.recipes or {}) do
+                if r.name:lower() == needle then
+                    found = self.API.OutputItemID and self.API.OutputItemID(r.index)
+                    break
+                end
+            end
+            if found then
+                self:PrintDisposition(found)
+            else
+                Print("No item called \"" .. arg .. "\" in this profession's recipes.")
+            end
+        end
+
     elseif msg == "reset" then
         PW.db.point = nil
         PW.db.size = nil
@@ -711,6 +766,7 @@ SlashCmdList.PROFWORKBENCH = function(msg)
         print("  /pwb scale <0.6-2> - change the window size, e.g. /pwb scale 1.3")
         print("  /pwb price <itemID> <gold> - set an item's price by hand")
         print("  /pwb scanitem <gold> - record the hovered item's price by hand")
+        print("  /pwb de [item] - compare vendor, auction and disenchant value")
         print("  /pwb prices - list known prices")
         print("  /pwb queue [<count>] [<recipe>] - add to the craft queue")
         print("  /pwb list - shopping list for the queue")

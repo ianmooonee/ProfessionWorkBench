@@ -4,7 +4,7 @@ A cleaner, flat dark replacement for the profession window in **World of Warcraf
 
 Open any profession as usual and Profession Workbench appears instead of the default window, with a searchable recipe list, skill-up colors at a glance, reagent counts that include your bank, and crafting cooldowns tracked across all your characters.
 
-> **Status:** early version (0.4.0), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
+> **Status:** early version (0.5.0), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
 
 ## Features
 
@@ -40,6 +40,11 @@ Open any profession as usual and Profession Workbench appears instead of the def
 - The **Queue** button in the toolbar opens the list: what is queued, and for each reagent how many you have and how many you still need to buy.
 - Intermediates are followed automatically. Queuing 10 Azure Silk Hoods with 47 Silk Cloth in your bags asks for the bolts too, and tells you that you are 33 Silk Cloth short rather than 33 bolts.
 - Missing reagents are listed first and marked in red, so the shopping list reads top-down.
+
+**Disenchant or sell**
+- For a craft whose result is a green, blue or purple weapon or armor piece, the details panel also shows what its materials are worth, and whether disenchanting beats selling. Profit is then measured against whichever pays more.
+- `/pwb de` compares the three ways to get rid of an item: what a vendor pays, the auction house price after the 5% cut, and the average value of its disenchant materials. With no argument it uses the item you are hovering; `/pwb de <itemID>` or `/pwb de <item name>` also work.
+- Disenchant values are averages from the WoW Forever disenchanting guide, resolved by item level. A single disenchant can come out better or worse, and an item whose materials have no price yet shows a `+` instead of a number.
 
 **Cooldowns**
 - Cooldown recipes (transmutes, Mooncloth and so on) are recorded whenever you open the profession, for every character.
@@ -82,6 +87,7 @@ Open a profession the normal way (spellbook or action bar). The window is movabl
 | `/pwb scanitem <gold>` | Record the price of the item you are hovering (an auction listing or a bag item), e.g. `/pwb scanitem 1.5` |
 | `/pwb queue [<count>] [<recipe>]` | Add to the craft queue; with no arguments it queues the selected recipe once |
 | `/pwb list` | Show the shopping list for the queue |
+| `/pwb de [item]` | Compare vendor, auction and disenchant value for an item (hover it, or give an item ID or name) |
 | `/pwb queueclear` | Empty the craft queue |
 | `/pwb reset` | Move the window back to the center of the screen and restore its default size |
 | `/pwb debug` | Print client version and API info (useful for bug reports) |

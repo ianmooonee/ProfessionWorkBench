@@ -1345,7 +1345,14 @@ function PW:UpdateProfit(r)
 
     local cost, costComplete = self:CraftCost(r.index)
     local value, valueComplete = self:OutputValue(r.index)
-    if not cost and not value then
+
+    -- What the crafted item's materials would fetch, for the tailoring ->
+    -- enchanting loop: sometimes the dust is worth more than the item.
+    local outID = self.API.OutputItemID and self.API.OutputItemID(r.index)
+    local deValue, deComplete = nil, false
+    if outID then deValue, deComplete = self:DisenchantValue(outID, false) end
+
+    if not cost and not value and not deValue then
         c.profit:SetText("|cff9a9aa0No prices yet|r")
         return
     end
@@ -1356,17 +1363,29 @@ function PW:UpdateProfit(r)
     end
     if value then
         parts[#parts + 1] = format("sells %s", PW.Money(value, true))
+    elseif deValue then
+        parts[#parts + 1] = "|cff9a9aa0no sale price|r"
+    end
+    -- Only worth showing the disenchant figure when it is the better option
+    -- or the item has no auction price at all.
+    if deValue and (not value or deValue > value) then
+        parts[#parts + 1] = format("|cff66ff66disenchants %s%s|r",
+            PW.Money(deValue, true), deComplete and "" or "+")
     end
     local line = table.concat(parts, "  ")
 
-    local profit = (cost and value) and (value - cost) or nil
+    -- Profit is against whichever way of selling is better, so the number
+    -- reflects the best you can actually do with the craft.
+    local best = value
+    if deValue and (not best or deValue > best) then best = deValue end
+    local profit = (cost and best) and (best - cost) or nil
     if profit then
         local col = self:ProfitColor(profit)
         local sign = profit >= 0 and "+" or ""
-        line = line .. format("  |cff%s%s%s|r",
-            format("%02x%02x%02x", col[1] * 255, col[2] * 255, col[3] * 255),
+        line = line .. format("  |cff%02x%02x%02x%s%s|r",
+            col[1] * 255, col[2] * 255, col[3] * 255,
             sign, PW.Money(profit, true))
-        if not (costComplete and valueComplete) then
+        if not (costComplete and (valueComplete or deComplete)) then
             line = line .. "|cff9a9aa0?|r"
         end
     end

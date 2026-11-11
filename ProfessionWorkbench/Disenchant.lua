@@ -77,14 +77,39 @@ local function RowFor(itemLevel)
     end
 end
 
+-- Returns itemName, itemLink, itemQuality, itemLevel, itemMinLevel, itemType,
+-- itemSubType, itemStackCount, itemEquipLoc, itemTexture, sellPrice, classID,
+-- with "ok" in front of them because of the pcall. Counting the blanks by hand
+-- is how a texture fileID once got read as a gold amount: sellPrice is the 12th
+-- value, not the 11th.
+local function GetItemFacts(itemID)
+    local get = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+    if not get then return end
+    local ok, name, link, quality, itemLevel, _, _, _, _, _, texture, sellPrice, classID
+        = pcall(get, itemID)
+    if not ok or not name then return end
+    return {
+        name = name,
+        link = link,
+        quality = quality,
+        itemLevel = itemLevel,
+        texture = texture,
+        sellPrice = sellPrice,
+        classID = classID,
+    }
+end
+
 -- Item details we need, or nil when the client hasn't cached the item yet.
 function PW:ItemFacts(itemID)
     if not itemID then return end
-    local get = (C_Item and C_Item.GetItemInfo) or GetItemInfo
-    if not get then return end
-    local ok, name, _, quality, itemLevel, _, _, _, _, _, _, classID = pcall(get, itemID)
-    if not ok or not name then return end
-    return { name = name, quality = quality, itemLevel = itemLevel, classID = classID }
+    return GetItemFacts(itemID)
+end
+
+-- What a vendor pays for the item.
+function PW:VendorValue(itemID)
+    if not itemID then return end
+    local f = GetItemFacts(itemID)
+    if f and f.sellPrice and f.sellPrice > 0 then return f.sellPrice end
 end
 
 -- Expected materials for one disenchant, as a list of { itemID, count }.
@@ -150,14 +175,6 @@ end
 ---------------------------------------------------------------------------
 -- Vendor / auction / disenchant
 ---------------------------------------------------------------------------
-
--- What a vendor pays for the item.
-function PW:VendorValue(itemID)
-    local get = (C_Item and C_Item.GetItemInfo) or GetItemInfo
-    if not get or not itemID then return end
-    local ok, _, _, _, _, _, _, _, _, _, sellPrice = pcall(get, itemID)
-    if ok and sellPrice and sellPrice > 0 then return sellPrice end
-end
 
 -- Compare the three ways to get rid of one item.
 -- Returns a table with each value that is known, plus the best one.

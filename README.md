@@ -4,7 +4,7 @@ A cleaner, flat dark replacement for the profession window in **World of Warcraf
 
 Open any profession as usual and Profession Workbench appears instead of the default window, with a searchable recipe list, skill-up colors at a glance, reagent counts that include your bank, and crafting cooldowns tracked across all your characters.
 
-> **Status:** early version (0.7.0), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
+> **Status:** early version (0.7.1), not yet widely tested in-game. Bug reports are welcome; see [Troubleshooting](#troubleshooting).
 
 ## Features
 

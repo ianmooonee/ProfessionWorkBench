@@ -5,7 +5,7 @@ local PW = {}
 ns.PW = PW
 _G.ProfessionWorkbench = PW -- handy for /dump while debugging
 
-PW.version = "0.6.0"
+PW.version = "0.6.1"
 
 local floor, max, format = math.floor, math.max, string.format
 
@@ -576,7 +576,7 @@ SlashCmdList.PROFWORKBENCH = function(msg)
             and "Using the default Blizzard window. Click \"Use Workbench\" on it, or type /pwb blizz, to switch back."
             or "Using the Profession Workbench window.")
 
-    elseif msg:match("^scale") then
+    elseif msg:match("^scale%f[%A]") or msg == "scale" then
         local arg = msg:match("^scale%s+(%S+)")
         if not arg then
             Print(format("Window scale is %.2f. Use /pwb scale <0.6-2>, e.g. /pwb scale 1.3", PW.db.scale or 1))
@@ -586,25 +586,24 @@ SlashCmdList.PROFWORKBENCH = function(msg)
             Print(format("Window scale set to %.2f.", PW:SetScale(arg)))
         end
 
-    elseif msg:match("^price") then
+    elseif msg:match("^price%f[%A]") or msg == "price" then
         local rest = msg:match("^price%s+(.+)$")
         if not rest then
             Print("Usage: /pwb price <itemID> <gold>  - set a price by hand, e.g. /pwb price 2592 1.5")
             Print("       /pwb price clear <itemID>  - forget a manual price")
             Print("       /pwb prices  - list what is known")
+        elseif rest:match("^clear%s+%d+$") then
+            local clearID = tonumber(rest:match("^clear%s+(%d+)$"))
+            if PW:Prices()[clearID] then
+                PW:Prices()[clearID] = nil
+                Print("Forgot the price for item " .. clearID .. ".")
+                if PW.frame and PW.frame:IsShown() then PW:Refresh() end
+            else
+                Print("No price stored for item " .. clearID .. ".")
+            end
         else
             local id, amount = rest:match("^(%d+)%s+(.+)$")
-            local clearID = rest:match("^clear%s+(%d+)$")
-            if clearID then
-                id = tonumber(clearID)
-                local p = PW:Prices()[id]
-                if p then
-                    PW:Prices()[id] = nil
-                    Print("Forgot the price for item " .. id .. ".")
-                else
-                    Print("No price stored for item " .. id .. ".")
-                end
-            elseif id and amount then
+            if id and amount then
                 id = tonumber(id)
                 local gold = tonumber(amount:match("^([%d%.]+)"))
                 if not gold then
@@ -639,7 +638,7 @@ SlashCmdList.PROFWORKBENCH = function(msg)
             end
         end
 
-    elseif msg:match("^queue") then
+    elseif msg:match("^queue%f[%A]") or msg == "queue" then
         local arg = msg:match("^queue%s+(.+)$")
         local r = self.selected and self.byIndex[self.selected]
         if arg then
@@ -689,14 +688,14 @@ SlashCmdList.PROFWORKBENCH = function(msg)
             end
         end
 
-    elseif msg:match("^scanitem") then
+    elseif msg:match("^scanitem%f[%A]") or msg == "scanitem" then
         local amount = msg:match("^scanitem%s+(%S+)$")
         local gold = amount and tonumber(amount:match("^([%d%.]+)"))
         local ok, text = self:PriceHovered(gold)
         Print(text)
         if ok and PW.frame and PW.frame:IsShown() then PW:Refresh() end
 
-    elseif msg:match("^de") then
+    elseif msg:match("^de%f[%A]") or msg == "de" then
         local arg = msg:match("^de%s+(.+)$")
         if not arg then
             -- No argument: use the hovered item, else the selected recipe's output.
@@ -729,13 +728,13 @@ SlashCmdList.PROFWORKBENCH = function(msg)
             end
         end
 
-    elseif msg:match("^ahscan") then
+    elseif msg:match("^ahscan%f[%A]") or msg == "ahscan" then
         self:StartScan()
 
-    elseif msg == "ahstop" then
+    elseif msg:match("^ahstop") then
         if self:IsScanning() then self:StopScan(false) else Print("No scan is running.") end
 
-    elseif msg == "ahstatus" then
+    elseif msg:match("^ahstatus") then
         local done, total, failed = self:ScanProgress()
         if not done then
             Print("No scan is running.")
@@ -743,8 +742,14 @@ SlashCmdList.PROFWORKBENCH = function(msg)
             Print(format("Scanning: %d of %d items (%d skipped). /pwb ahstop to cancel.", done, total, failed or 0))
         end
 
-    elseif msg == "ahitem" then
+    elseif msg:match("^ahitem") then
         self:ScanHovered()
+
+    elseif msg == "ahhelp" then
+        Print("Auction house:")
+        print("  /pwb ahscan - price your recipes' reagents, products and disenchant materials")
+        print("  /pwb ahitem - price just the item you are hovering")
+        print("  /pwb ahstatus, /pwb ahstop")
 
     elseif msg == "reset" then
         PW.db.point = nil

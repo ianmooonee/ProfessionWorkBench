@@ -39,6 +39,14 @@ function PW:IsScanning()
     return scan ~= nil
 end
 
+-- Whether the auction house is open. The UI is a load-on-demand addon, so the
+-- frame may not exist until the player opens it; prefer probing the API state
+-- and fall back to the frame only when that is unavailable.
+function PW:AuctionHouseOpen()
+    -- The window is a load-on-demand addon: nil until the player opens it once.
+    return (AuctionHouseFrame and AuctionHouseFrame:IsShown()) and true or false
+end
+
 function PW:ScanProgress()
     if not scan then return end
     return scan.done, #scan.queue, scan.failed
@@ -69,9 +77,10 @@ function PW:StartScan()
         Notify("This client has no auction house API the addon can use. Record prices with /pwb scanitem instead.")
         return
     end
-    if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then
-        Notify("Open the auction house first, then run /pwb ahscan.")
-        return
+    -- The frame check is only a courtesy: if the name ever differs, the scan
+    -- still runs and reports through the events.
+    if not self:AuctionHouseOpen() then
+        Notify("Open the auction house first, then start the scan.")
     end
     if scan then
         Notify("A scan is already running. /pwb ahstop to cancel it.")
@@ -96,16 +105,15 @@ function PW:StopScan(finished)
     else
         Notify(format("Scan stopped after %d of %d items.", done, total))
     end
+    self:UpdateAHButton()
     if self.frame and self.frame:IsShown() then self:Refresh() end
 end
 
 -- Send the next query, or wait for the throttle to clear.
 function PW:PumpScan()
     if not scan then return end
-    if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then
-        self:StopScan(false)
-        return
-    end
+    -- Do not hard-stop on a missing frame; the throttle and result events are
+    -- the real signal that the auction house is alive.
     if not AH.IsThrottledMessageSystemReady() then
         -- AUCTION_HOUSE_THROTTLED_SYSTEM_READY will call us again.
         scan.waiting = true
@@ -213,14 +221,76 @@ end
 -- Events
 ---------------------------------------------------------------------------
 
+---------------------------------------------------------------------------
+-- A button in the auction house window itself
+--
+-- Typing a command at the auction house is awkward, so the scan gets a button
+-- on Blizzard's window. The frame is a load-on-demand addon, so this is
+-- re-tried on AUCTION_HOUSE_SHOW and on the frame becoming available.
+---------------------------------------------------------------------------
+
+local ahButton
+
+local function BuildAHButton(parent)
+    if ahButton then return ahButton end
+    local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    b:SetSize(120, 22)
+    -- Top of the window, clear of the search bar and the tab strip.
+    b:SetPoint("TOPLEFT", parent, "TOPLEFT", 14, -34)
+    b:SetText("Scan prices")
+    b:SetScript("OnClick", function()
+        if PW:IsScanning() then
+            PW:StopScan(false)
+        else
+            PW:StartScan()
+        end
+        PW:UpdateAHButton()
+    end)
+    b:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Profession Workbench: scan prices")
+        GameTooltip:AddLine("Prices every reagent and product of your known recipes, plus the disenchant materials.", 1, 1, 1, true)
+        GameTooltip:AddLine("Paced to the auction house limit, so a scan takes a couple of minutes.", 0.7, 0.7, 0.7, true)
+        GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", GameTooltip_Hide)
+    ahButton = b
+    return b
+end
+
+function PW:UpdateAHButton()
+    local b = ahButton
+    if not b then return end
+    local done, total = self:ScanProgress()
+    if done then
+        b:SetText(format("Stop %d/%d", done, total))
+    else
+        b:SetText("Scan prices")
+    end
+end
+
+-- Called on AUCTION_HOUSE_SHOW, and again once the frame exists.
+function PW:HookAuctionHouse()
+    if not usable then return end
+    if not AuctionHouseFrame then return end
+    local b = BuildAHButton(AuctionHouseFrame)
+    b:SetShown(true)
+    self:UpdateAHButton()
+end
+
 function PW:AUCTION_HOUSE_THROTTLED_SYSTEM_READY()
     if scan and scan.waiting then self:PumpScan() end
 end
 
 function PW:AUCTION_HOUSE_SHOW()
+    -- The window may be created after this event fires, so try now and once
+    -- more on the next frame.
+    self:HookAuctionHouse()
+    C_Timer.After(0, function() PW:HookAuctionHouse() end)
+    C_Timer.After(0.5, function() PW:HookAuctionHouse() end)
     if not PW.ahHinted and usable then
         PW.ahHinted = true
-        Notify("Auction house open. /pwb ahscan prices your recipes' reagents and products, and the disenchant materials.")
+        Notify("There is a \"Scan prices\" button on the auction house window.")
     end
 end
 
@@ -256,7 +326,7 @@ function PW:ScanHovered()
         Notify("Hover an auction listing first.")
         return
     end
-    if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then
+    if not self:AuctionHouseOpen() then
         Notify("Open the auction house first.")
         return
     end
